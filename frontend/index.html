@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lecture → Diagram</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0; padding: 2rem;
+    max-width: 900px; margin-inline: auto;
+  }
+  h1 { margin-bottom: 0.25rem; }
+  .sub { color: #888; margin-top: 0; margin-bottom: 1.5rem; font-size: 0.95rem; }
+  .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.8rem; }
+  button {
+    font-size: 1rem; padding: 0.55rem 1.1rem; border-radius: 8px;
+    border: 1px solid #999; cursor: pointer; background: #f5f5f5;
+  }
+  button:hover { background: #e8e8e8; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #startBtn.active { background: #2e7d32; color: white; border-color: #2e7d32; }
+  #status { font-weight: 600; margin: 0 0 0.8rem 0; }
+  #status.err { color: #c62828; }
+  #status.ok { color: #2e7d32; }
+  #transcriptWrap { margin-bottom: 1.2rem; }
+  #transcriptWrap label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; }
+  #transcript {
+    color: #555; font-size: 0.9rem; max-height: 110px; overflow-y: auto;
+    border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.8rem;
+    background: #fafafa; white-space: pre-wrap;
+  }
+  #manualInput {
+    width: 100%; box-sizing: border-box; min-height: 70px; font-family: inherit;
+    font-size: 0.9rem; border-radius: 8px; border: 1px solid #ddd; padding: 0.6rem 0.8rem;
+    resize: vertical;
+  }
+  #chartWrap {
+    overflow-x: auto; max-width: 100%; border: 1px solid #ddd; border-radius: 8px;
+    padding: 1rem; background: white; min-height: 200px;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1a1a1a; color: #eee; }
+    button { background: #2a2a2a; color: #eee; border-color: #555; }
+    button:hover { background: #333; }
+    #transcript, #manualInput, #chartWrap { background: #222; border-color: #444; color: #ddd; }
+  }
+</style>
+</head>
+<body>
+  <h1>🎓 Lecture → Diagram</h1>
+  <p class="sub">Speak — the hard parts get turned into a live flowchart (updates every ~20s, or hit "Generate diagram now").</p>
+
+  <div class="controls">
+    <button id="startBtn">▶ Start listening</button>
+    <button id="forceBtn" disabled>⚡ Generate diagram now</button>
+  </div>
+  <p id="status">idle</p>
+
+  <div id="transcriptWrap">
+    <label>Live transcript</label>
+    <div id="transcript"></div>
+  </div>
+
+  <div id="transcriptWrap">
+    <label>No mic, or recognition not picking up? Type/paste lecture text here instead —
+      it feeds the same pipeline.</label>
+    <textarea id="manualInput" placeholder="Paste or type lecture text here..."></textarea>
+  </div>
+
+  <div id="chartWrap">
+    <pre class="mermaid" id="chart">flowchart TD
+    A[Waiting for lecture...]</pre>
+  </div>
+
+<script>
+mermaid.initialize({ startOnLoad: false, theme: "default" });
+
+const startBtn = document.getElementById("startBtn");
+const forceBtn = document.getElementById("forceBtn");
+const statusEl = document.getElementById("status");
+const transcriptEl = document.getElementById("transcript");
+const manualInput = document.getElementById("manualInput");
+const chartEl = document.getElementById("chart");
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let fullTranscript = "";
+let ws;
+let listening = false;
+let reconnectDelay = 1000;
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+startBtn.onclick = () => {
+  if (listening) {
+    listening = false;
+    startBtn.textContent = "▶ Start listening";
+    startBtn.classList.remove("active");
+    if (ws) ws.close();
+    setStatus("stopped");
+    return;
+  }
+  listening = true;
+  startBtn.textContent = "■ Stop";
+  startBtn.classList.add("active");
+  forceBtn.disabled = false;
+  connect();
+  if (SpeechRecognition) {
+    startRecognition();
+  } else {
+    setStatus("Speech recognition not supported in this browser — use the text box below instead.", "err");
+  }
+};
+
+const FORCE_COOLDOWN_MS = 8000; // don't let mashing this button blow through the API quota
+
+forceBtn.onclick = () => {
+  const text = (fullTranscript + " " + manualInput.value).trim();
+  if (!text) return;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ text, force: true }));
+    setStatus("generating diagram...", "ok");
+    forceBtn.disabled = true;
+    setTimeout(() => { if (listening) forceBtn.disabled = false; }, FORCE_COOLDOWN_MS);
+  }
+};
+
+manualInput.addEventListener("input", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const text = (fullTranscript + " " + manualInput.value).trim();
+  ws.send(JSON.stringify({ text }));
+});
+
+function connect() {
+  setStatus("connecting...");
+  ws = new WebSocket(`ws://${location.host}/ws/lecture`);
+
+  ws.onopen = () => {
+    setStatus("listening 🎙️", "ok");
+    reconnectDelay = 1000;
+    const combined = (fullTranscript + " " + manualInput.value).trim();
+    if (combined) ws.send(JSON.stringify({ text: combined }));
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "diagram") {
+      renderDiagram(msg.data);
+      if (listening) setStatus("listening 🎙️", "ok");
+    } else if (msg.type === "empty") {
+      // Gemini looked and found nothing hard/new yet - not an error, just wait.
+      if (listening) setStatus("listening 🎙️ (nothing diagram-worthy yet)", "ok");
+    } else if (msg.type === "error") {
+      setStatus(`backend error: ${msg.message}`, "err");
+    }
+  };
+
+  ws.onclose = () => {
+    if (!listening) return;
+    setStatus("reconnecting...", "err");
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+  };
+
+  ws.onerror = () => {
+    setStatus("connection error - retrying...", "err");
+  };
+}
+
+function startRecognition() {
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = "en-US";
+
+  recognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        fullTranscript += " " + event.results[i][0].transcript;
+        transcriptEl.textContent = fullTranscript;
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ text: (fullTranscript + " " + manualInput.value).trim() }));
+        }
+      }
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.error("SpeechRecognition error:", event.error);
+    if (event.error === "no-speech") return; // fires constantly during silence, harmless
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      setStatus("Mic permission denied — allow microphone access, or use the text box below.", "err");
+      return;
+    }
+    if (event.error === "network") {
+      setStatus("Speech recognition needs network access and failed — use the text box below instead.", "err");
+      return;
+    }
+    setStatus(`mic error: ${event.error} — use the text box below if this persists.`, "err");
+  };
+
+  recognition.onend = () => { if (listening) { try { recognition.start(); } catch (e) {} } };
+  try {
+    recognition.start();
+  } catch (e) {
+    setStatus("Could not start microphone — use the text box below instead.", "err");
+  }
+}
+
+// Mermaid node/edge labels come straight from the LLM and can contain quotes,
+// brackets, etc. that break Mermaid's syntax mid-render. Strip anything that
+// isn't safe inside a quoted node label.
+function sanitizeLabel(label) {
+  return String(label || "").replace(/["\[\]{}|]/g, "").slice(0, 80);
+}
+
+// Node ids/edge endpoints are unquoted identifiers in Mermaid syntax - a space,
+// dot, or punctuation in an LLM-chosen id (e.g. "1.a", "node 1") breaks parsing
+// just as badly as an unsanitized label would.
+function sanitizeId(id) {
+  const safe = String(id || "").replace(/[^A-Za-z0-9_]/g, "");
+  // Fixed (not random) fallback so a node def and its edge references still
+  // link up correctly even in the degenerate case of a blank/all-punctuation id.
+  return safe || "n_unnamed";
+}
+
+let lastGoodDef = null;
+
+function renderDiagram(data) {
+  if (!data.nodes || !data.nodes.length) return;
+  let def = "flowchart TD\n";
+  for (const n of data.nodes) {
+    def += `  ${sanitizeId(n.id)}["${sanitizeLabel(n.label)}"]\n`;
+  }
+  for (const e of data.edges || []) {
+    const label = e.label ? `|${sanitizeLabel(e.label)}|` : "";
+    def += `  ${sanitizeId(e.from)} -->${label} ${sanitizeId(e.to)}\n`;
+  }
+
+  chartEl.textContent = def;
+  chartEl.removeAttribute("data-processed");
+  mermaid.run({ nodes: [chartEl] })
+    .then(() => { lastGoodDef = def; })
+    .catch((err) => {
+      console.error("mermaid render failed, keeping last good diagram", err);
+      if (lastGoodDef) {
+        chartEl.textContent = lastGoodDef;
+        chartEl.removeAttribute("data-processed");
+        mermaid.run({ nodes: [chartEl] }).catch(() => {});
+      }
+    });
+}
+</script>
+</body>
+</html>
