@@ -5,3 +5,4 @@ __pycache__/
 .claude/
 *.db
 *.db-journal
+*.log

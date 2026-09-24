@@ -98,6 +98,20 @@ class ScribeRealtimeClient:
             "sample_rate": SAMPLE_RATE,
         }))
 
+    async def commit(self) -> None:
+        """Force-commit whatever Scribe is still holding as a partial (an empty
+        chunk with commit=True, per the server-side streaming docs). The docs
+        don't say whether this is honored under commit_strategy=vad, so callers
+        must not assume a committed_transcript will follow."""
+        if not self._ws:
+            raise ScribeConnectionError("not connected")
+        await self._ws.send(json.dumps({
+            "message_type": "input_audio_chunk",
+            "audio_base_64": "",
+            "commit": True,
+            "sample_rate": SAMPLE_RATE,
+        }))
+
     async def events(self) -> AsyncIterator[dict]:
         """Yields parsed server->client messages until the connection closes."""
         if not self._ws:

@@ -338,7 +338,17 @@ function stopListening() {
   stopTimerAndRing();
   stopWaveLoop();
   stopMic();
-  if (ws) { try { ws.send(JSON.stringify({ type: "stt_stop" })); } catch (e) {} ws.close(); }
+  if (ws) finishSocket(ws);
+}
+
+// Stop doesn't close the socket right away: the backend first commits Scribe's
+// last partial and runs one final extraction over it, then sends "stopped"
+// (handled in connect()). The timeout is only a fallback if that never arrives.
+const STOP_FLUSH_TIMEOUT_MS = 30000;
+function finishSocket(sock) {
+  if (sock.readyState !== WebSocket.OPEN) { sock.close(); return; }
+  sock.send(JSON.stringify({ type: "stt_stop" }));
+  setTimeout(() => sock.close(), STOP_FLUSH_TIMEOUT_MS);
 }
 
 micBtn.onclick = () => { listening ? stopListening() : startListening(); };
@@ -389,11 +399,15 @@ function connect() {
     } else if (msg.type === "partial_transcript") {
       partialLine = msg.text;
       renderTranscript();
+    } else if (msg.type === "stopped") {
+      event.target.close(); // final flush + extraction after Stop are done
     }
   };
 
-  ws.onclose = () => {
-    if (!listening) return;
+  ws.onclose = (event) => {
+    // A socket still finishing a previous Stop can close after a new session
+    // has started. Only the current socket should trigger a reconnect.
+    if (!listening || event.target !== ws) return;
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 10000);
   };
