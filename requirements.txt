@@ -3,8 +3,8 @@ fastapi
 uvicorn[standard]
 websockets
 python-multipart
-requests
-elevenlabs
-google-generativeai
-tavily-python
 python-dotenv
+google-genai
+pydantic  # already a FastAPI dependency; listed explicitly since backend/services/diagram.py imports it directly for strict Gemini-output validation
+sqlmodel  # Phase 4: sessions/diagrams/transcript_chunks persistence
+aiosqlite  # async SQLite driver for sqlmodel/SQLAlchemy -- async only, no thread-executor DB access

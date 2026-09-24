@@ -2,221 +2,594 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lecture → Diagram</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: dark;
+    --bg: #0b0e14;
+    --card: #141821;
+    --card-border: #232838;
+    --text: #e7e9ee;
+    --muted: #8b92a5;
+    --accent: #22c55e;
+    --accent-dim: #16351f;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-    margin: 0; padding: 2rem;
-    max-width: 900px; margin-inline: auto;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 1.5rem 2rem 2.5rem;
+    background: var(--bg); color: var(--text);
+    font-size: 17px;
   }
-  h1 { margin-bottom: 0.25rem; }
-  .sub { color: #888; margin-top: 0; margin-bottom: 1.5rem; font-size: 0.95rem; }
-  .controls { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.8rem; }
+  h1 { margin: 0 0 0.15rem; font-size: 1.7rem; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 1.3rem; font-size: 0.95rem; }
+
+  .control-row {
+    display: flex; align-items: center; gap: 0.9rem;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 12px; padding: 0.6rem 0.9rem; margin-bottom: 0.9rem;
+  }
+
+  .timer {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700; font-size: 0.95rem; color: var(--text); letter-spacing: 0.03em;
+    flex: none; min-width: 3.4rem; text-align: center;
+  }
+
+  /* ---- generate-now button + countdown ring (SVG stroke-dasharray technique) ---- */
+  .ring-btn {
+    position: relative; flex: none; width: 44px; height: 44px; padding: 0;
+    border-radius: 50%; border: none; background: transparent; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .ring-btn:hover:not(:disabled) { background: #1b2130; }
+  .ring-btn:disabled { cursor: default; opacity: 0.5; }
+  .ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+  .ring-track { fill: none; stroke: var(--card-border); stroke-width: 3; }
+  .ring-progress {
+    fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round;
+    transition: stroke-dashoffset 1s linear;
+  }
+  @keyframes ringPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .ring-btn.busy .ring-progress { animation: ringPulse 1s ease-in-out infinite; }
+  .ring-icon { position: relative; z-index: 1; font-size: 1.05rem; }
+
+  /* ---- live waveform (replaces the old "STT: idle/connected" status text) ---- */
+  .wave-area { position: relative; flex: 1 1 auto; min-width: 0; height: 44px; }
+  .wave-area.clickable { cursor: pointer; }
+  #waveCanvas { width: 100%; height: 100%; display: block; }
+  .warn-btn {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem; background: #2a1414; color: var(--red); border: 1px solid var(--red);
+  }
+  .error-line {
+    display: none; font-size: 0.8rem; color: var(--red); background: #1c1010;
+    border: 1px solid #3a1c1c; border-radius: 8px; padding: 0.5rem 0.8rem; margin: 0 0 1rem;
+  }
+
+  /* ---- mic toggle: tap to start, tap to stop, never hold-to-talk ---- */
+  .mic-btn {
+    flex: none; width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+    border: 1px solid var(--card-border); background: #1b2130; color: var(--text);
+  }
+  @keyframes micPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+    50% { box-shadow: 0 0 0 9px rgba(239, 68, 68, 0); }
+  }
+  .mic-btn.recording {
+    background: var(--red); border-color: var(--red); color: #fff;
+    animation: micPulse 1.6s ease-in-out infinite;
+  }
+
   button {
-    font-size: 1rem; padding: 0.55rem 1.1rem; border-radius: 8px;
-    border: 1px solid #999; cursor: pointer; background: #f5f5f5;
+    font-size: 0.95rem; font-weight: 600; padding: 0.6rem 1.15rem; border-radius: 9px;
+    border: 1px solid var(--card-border); cursor: pointer; background: #1b2130; color: var(--text);
+    transition: background 0.15s, border-color 0.15s;
   }
-  button:hover { background: #e8e8e8; }
-  button:disabled { opacity: 0.5; cursor: default; }
-  #startBtn.active { background: #2e7d32; color: white; border-color: #2e7d32; }
-  #status { font-weight: 600; margin: 0 0 0.8rem 0; }
-  #status.err { color: #c62828; }
-  #status.ok { color: #2e7d32; }
-  #transcriptWrap { margin-bottom: 1.2rem; }
-  #transcriptWrap label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; }
+  button:hover:not(:disabled) { background: #242c3f; }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  .card { background: var(--card); border: 1px solid var(--card-border); border-radius: 14px; padding: 1.2rem; margin-bottom: 1.2rem; }
+  .card h2 { margin: 0 0 0.7rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+  #chartWrap { min-height: 320px; display: flex; align-items: center; justify-content: center; overflow-x: auto; cursor: default; }
+  #chartWrap.flash { animation: flash 0.6s ease; }
+  @keyframes flash { 0% { box-shadow: inset 0 0 0 2px var(--accent); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
+  #chart { color: var(--text); opacity: 1; transition: opacity 0.3s ease; }
+  #chartWrap.has-diagram { cursor: pointer; }
+  .placeholder { color: var(--muted); text-align: center; font-size: 1.05rem; }
+  #sourceView {
+    display: none; font-size: 0.85rem; line-height: 1.55; color: #c7cbd6;
+    white-space: pre-wrap; text-align: left; max-height: 320px; overflow-y: auto;
+    padding: 0.2rem 0.3rem;
+  }
+  #sourceHint { color: var(--muted); font-size: 0.72rem; text-align: center; margin: 0.6rem 0 0; }
+
+  /* ---- Live transcript (sits above the diagram, editable) ---- */
+  .transcript-card { position: relative; margin-bottom: 1.2rem; padding-bottom: 2.8rem; }
   #transcript {
-    color: #555; font-size: 0.9rem; max-height: 110px; overflow-y: auto;
-    border: 1px solid #ddd; border-radius: 8px; padding: 0.6rem 0.8rem;
-    background: #fafafa; white-space: pre-wrap;
+    font-size: 0.85rem; line-height: 1.5; max-height: 140px; overflow-y: auto;
+    color: #c7cbd6; white-space: pre-wrap;
   }
-  #manualInput {
-    width: 100%; box-sizing: border-box; min-height: 70px; font-family: inherit;
-    font-size: 0.9rem; border-radius: 8px; border: 1px solid #ddd; padding: 0.6rem 0.8rem;
-    resize: vertical;
+  #transcript .partial { color: var(--muted); font-style: italic; }
+  #transcriptEdit {
+    display: none; width: 100%; box-sizing: border-box; min-height: 90px; max-height: 200px;
+    font-family: inherit; font-size: 0.85rem; line-height: 1.5; border-radius: 9px;
+    border: 1px solid var(--accent); padding: 0.6rem 0.8rem; resize: vertical;
+    background: #0f131b; color: var(--text);
   }
-  #chartWrap {
-    overflow-x: auto; max-width: 100%; border: 1px solid #ddd; border-radius: 8px;
-    padding: 1rem; background: white; min-height: 200px;
+  #editTranscriptBtn {
+    position: absolute; right: 0.9rem; bottom: 0.9rem;
+    width: 2rem; height: 2rem; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.95rem; line-height: 1; background: #1b2130;
   }
-  @media (prefers-color-scheme: dark) {
-    body { background: #1a1a1a; color: #eee; }
-    button { background: #2a2a2a; color: #eee; border-color: #555; }
-    button:hover { background: #333; }
-    #transcript, #manualInput, #chartWrap { background: #222; border-color: #444; color: #ddd; }
-  }
+  #editTranscriptBtn.active { background: var(--accent); color: #06210f; border-color: var(--accent); }
+
+  .mermaid { background: transparent !important; }
 </style>
 </head>
 <body>
   <h1>🎓 Lecture → Diagram</h1>
-  <p class="sub">Speak — the hard parts get turned into a live flowchart (updates every ~20s, or hit "Generate diagram now").</p>
+  <p class="sub">Speak — the hard part gets turned into a live flowchart.</p>
 
-  <div class="controls">
-    <button id="startBtn">▶ Start listening</button>
-    <button id="forceBtn" disabled>⚡ Generate diagram now</button>
+  <div class="control-row">
+    <button id="genBtn" class="ring-btn" type="button" title="Generate diagram now" aria-label="Generate diagram now" disabled>
+      <svg class="ring-svg" viewBox="0 0 48 48" aria-hidden="true">
+        <circle class="ring-track" cx="24" cy="24" r="20"></circle>
+        <circle class="ring-progress" id="ringProgress" cx="24" cy="24" r="20"></circle>
+      </svg>
+      <span class="ring-icon">⚡</span>
+    </button>
+
+    <div class="wave-area clickable" id="waveArea">
+      <canvas id="waveCanvas"></canvas>
+      <button class="warn-btn" id="warnBtn" type="button" style="display:none" title="Show connection error" aria-label="Show connection error">⚠</button>
+    </div>
+
+    <span class="timer" id="timerLabel">00:00</span>
+
+    <button id="micBtn" class="mic-btn" type="button" title="Start listening" aria-label="Start or stop listening">🎤</button>
   </div>
-  <p id="status">idle</p>
+  <div class="error-line" id="errorLine"></div>
 
-  <div id="transcriptWrap">
-    <label>Live transcript</label>
+  <div class="card transcript-card">
+    <h2>Live transcript</h2>
     <div id="transcript"></div>
+    <textarea id="transcriptEdit" spellcheck="false"></textarea>
+    <button id="editTranscriptBtn" type="button" title="Edit transcript" aria-label="Edit transcript">✎</button>
   </div>
 
-  <div id="transcriptWrap">
-    <label>No mic, or recognition not picking up? Type/paste lecture text here instead —
-      it feeds the same pipeline.</label>
-    <textarea id="manualInput" placeholder="Paste or type lecture text here..."></textarea>
-  </div>
-
-  <div id="chartWrap">
-    <pre class="mermaid" id="chart">flowchart TD
-    A[Waiting for lecture...]</pre>
+  <div class="card">
+    <h2>Diagram</h2>
+    <div id="chartWrap">
+      <p class="placeholder" id="placeholder">Waiting for something diagram-worthy…</p>
+      <pre class="mermaid" id="chart" style="display:none"></pre>
+      <div id="sourceView"></div>
+    </div>
+    <p id="sourceHint" style="display:none">Click the diagram to see the transcript it came from</p>
   </div>
 
 <script>
-mermaid.initialize({ startOnLoad: false, theme: "default" });
+mermaid.initialize({ startOnLoad: false, theme: "dark" });
 
-const startBtn = document.getElementById("startBtn");
-const forceBtn = document.getElementById("forceBtn");
-const statusEl = document.getElementById("status");
+const genBtn = document.getElementById("genBtn");
+const ringProgress = document.getElementById("ringProgress");
+const waveArea = document.getElementById("waveArea");
+const waveCanvas = document.getElementById("waveCanvas");
+const waveCtx = waveCanvas.getContext("2d");
+const warnBtn = document.getElementById("warnBtn");
+const errorLine = document.getElementById("errorLine");
+const micBtn = document.getElementById("micBtn");
 const transcriptEl = document.getElementById("transcript");
-const manualInput = document.getElementById("manualInput");
+const transcriptEditEl = document.getElementById("transcriptEdit");
+const editTranscriptBtn = document.getElementById("editTranscriptBtn");
 const chartEl = document.getElementById("chart");
+const chartWrap = document.getElementById("chartWrap");
+const placeholderEl = document.getElementById("placeholder");
+const sourceView = document.getElementById("sourceView");
+const sourceHint = document.getElementById("sourceHint");
+const timerLabel = document.getElementById("timerLabel");
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let fullTranscript = "";
 let ws;
 let listening = false;
 let reconnectDelay = 1000;
+let audioCtx, mediaStream, scriptNode, analyser, waveDataArray;
+let waveRafId = null;
+let finalLines = [];
+let partialLine = "";
+let editingTranscript = false;
+let sttErrorDetail = null; // last known error detail (STT or diagram-gen); null = no active error
 
-function setStatus(text, kind) {
-  statusEl.textContent = text;
-  statusEl.className = kind || "";
+// ---- session timer + countdown ring ----
+// Both run off one setInterval that's independent of WebSocket events/state,
+// so they keep ticking correctly across a WS reconnect; only the *value* they
+// display is nudged by server messages (config on connect, extraction fired).
+let recordStartMs = null;
+// TODO: the backend already sends this once over the WS as the "config"
+// message on connect (see ws.onmessage below) - this is just the fallback
+// default until that arrives, per this task's "frontend-only" scope.
+let extractionIntervalSeconds = 20;
+let ringStartMs = null;
+let tickInterval = null;
+
+const RING_R = 20;
+const RING_C = 2 * Math.PI * RING_R;
+ringProgress.style.strokeDasharray = `${RING_C}`;
+
+function fmtMMSS(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const s = Math.floor(totalSeconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
 }
 
-startBtn.onclick = () => {
-  if (listening) {
-    listening = false;
-    startBtn.textContent = "▶ Start listening";
-    startBtn.classList.remove("active");
-    if (ws) ws.close();
-    setStatus("stopped");
-    return;
-  }
-  listening = true;
-  startBtn.textContent = "■ Stop";
-  startBtn.classList.add("active");
-  forceBtn.disabled = false;
-  connect();
-  if (SpeechRecognition) {
-    startRecognition();
+function setRingProgress(frac, instant) {
+  const offset = RING_C * (1 - Math.max(0, Math.min(1, frac)));
+  if (instant) {
+    // Snap instantly instead of visibly winding backwards over the CSS
+    // transition - only used on a hard reset (start / force / extraction result).
+    ringProgress.style.transition = "none";
+    ringProgress.style.strokeDashoffset = `${offset}`;
+    void ringProgress.getBoundingClientRect(); // force reflow before re-enabling the transition
+    ringProgress.style.transition = "";
   } else {
-    setStatus("Speech recognition not supported in this browser — use the text box below instead.", "err");
+    ringProgress.style.strokeDashoffset = `${offset}`;
+  }
+}
+setRingProgress(0, true);
+
+function resetRing() {
+  ringStartMs = Date.now();
+  setRingProgress(0, true);
+}
+
+function startTimerAndRing() {
+  recordStartMs = Date.now();
+  timerLabel.textContent = "00:00";
+  resetRing();
+  if (tickInterval) clearInterval(tickInterval);
+  tickInterval = setInterval(() => {
+    timerLabel.textContent = fmtMMSS((Date.now() - recordStartMs) / 1000);
+    if (ringStartMs !== null) {
+      // Only updated once/sec here, but the 1s linear CSS transition on
+      // stroke-dashoffset turns these steps into a smooth continuous sweep.
+      setRingProgress((Date.now() - ringStartMs) / 1000 / extractionIntervalSeconds);
+    }
+  }, 1000);
+}
+
+function stopTimerAndRing() {
+  if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+  ringStartMs = null; // timer text and ring position both stay frozen at their last value
+}
+
+// ---- error surfacing: a small warning icon at the right end of the
+// waveform, shown for STT connect/WS/mic-permission errors as well as
+// diagram-generation errors (the old "Diagram: error ..." text). Clicking it
+// toggles a one-line detail underneath - same information the old status
+// text row exposed, just tucked away until asked for. ----
+function showError(detail) {
+  sttErrorDetail = detail || "Unknown error";
+  warnBtn.style.display = "flex";
+}
+function clearError() {
+  sttErrorDetail = null;
+  warnBtn.style.display = "none";
+  errorLine.style.display = "none";
+}
+warnBtn.onclick = () => {
+  if (errorLine.style.display === "block") {
+    errorLine.style.display = "none";
+  } else {
+    errorLine.textContent = sttErrorDetail || "Unknown error";
+    errorLine.style.display = "block";
   }
 };
+function updateSttStatus(state, detail) {
+  if (state === "error") showError(detail);
+  else if (state === "connected") clearError();
+  // "connecting"/"disconnected" leave any existing error indicator alone -
+  // a reconnect attempt shouldn't silently hide a real error, and isn't one itself.
+}
+
+// ---- start / stop ----
+// Toggle, never hold-to-talk - lectures run long. The waveform area doubles
+// as a bigger "tap to start" target while the mic is off; once recording,
+// clicking it does nothing (only the mic button stops it).
+async function startListening() {
+  if (listening) return;
+  listening = true;
+  micBtn.classList.add("recording");
+  micBtn.title = "Stop listening";
+  waveArea.classList.remove("clickable");
+  genBtn.disabled = false;
+  startTimerAndRing();
+  connect();
+  try {
+    await startMic();
+    startWaveLoop();
+  } catch (e) {
+    listening = false;
+    micBtn.classList.remove("recording");
+    micBtn.title = "Start listening";
+    waveArea.classList.add("clickable");
+    genBtn.disabled = true;
+    stopTimerAndRing();
+    showError("mic: " + e.message);
+  }
+}
+
+function stopListening() {
+  listening = false;
+  micBtn.classList.remove("recording");
+  micBtn.title = "Start listening";
+  waveArea.classList.add("clickable");
+  genBtn.disabled = true;
+  genBtn.classList.remove("busy");
+  stopTimerAndRing();
+  stopWaveLoop();
+  stopMic();
+  if (ws) { try { ws.send(JSON.stringify({ type: "stt_stop" })); } catch (e) {} ws.close(); }
+}
+
+micBtn.onclick = () => { listening ? stopListening() : startListening(); };
+waveArea.addEventListener("click", () => { if (!listening) startListening(); });
 
 const FORCE_COOLDOWN_MS = 8000; // don't let mashing this button blow through the API quota
-
-forceBtn.onclick = () => {
-  const text = (fullTranscript + " " + manualInput.value).trim();
-  if (!text) return;
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ text, force: true }));
-    setStatus("generating diagram...", "ok");
-    forceBtn.disabled = true;
-    setTimeout(() => { if (listening) forceBtn.disabled = false; }, FORCE_COOLDOWN_MS);
-  }
+genBtn.onclick = () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "force" }));
+  genBtn.classList.add("busy");
+  resetRing();
+  genBtn.disabled = true;
+  setTimeout(() => { if (listening) genBtn.disabled = false; }, FORCE_COOLDOWN_MS);
 };
 
-manualInput.addEventListener("input", () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const text = (fullTranscript + " " + manualInput.value).trim();
-  ws.send(JSON.stringify({ text }));
-});
-
+// ---- websocket ----
 function connect() {
-  setStatus("connecting...");
   ws = new WebSocket(`ws://${location.host}/ws/lecture`);
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
-    setStatus("listening 🎙️", "ok");
     reconnectDelay = 1000;
-    const combined = (fullTranscript + " " + manualInput.value).trim();
-    if (combined) ws.send(JSON.stringify({ text: combined }));
+    if (listening) ws.send(JSON.stringify({ type: "stt_start" }));
   };
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-    if (msg.type === "diagram") {
-      renderDiagram(msg.data);
-      if (listening) setStatus("listening 🎙️", "ok");
+    if (msg.type === "config") {
+      extractionIntervalSeconds = msg.extraction_interval_seconds || extractionIntervalSeconds;
+      if (listening) resetRing();
+    } else if (msg.type === "diagram") {
+      renderDiagram(msg.graph, msg.source_text || "");
+      genBtn.classList.remove("busy");
+      resetRing(); // an extraction just fired (timed or forced) - restart the wait
     } else if (msg.type === "empty") {
-      // Gemini looked and found nothing hard/new yet - not an error, just wait.
-      if (listening) setStatus("listening 🎙️ (nothing diagram-worthy yet)", "ok");
+      genBtn.classList.remove("busy");
+      resetRing();
     } else if (msg.type === "error") {
-      setStatus(`backend error: ${msg.message}`, "err");
+      genBtn.classList.remove("busy");
+      resetRing();
+      showError((msg.stage ? msg.stage + ": " : "") + (msg.detail || "diagram generation error"));
+    } else if (msg.type === "stt_status") {
+      updateSttStatus(msg.state, msg.detail);
+    } else if (msg.type === "transcript_chunk") {
+      finalLines.push(msg.text);
+      partialLine = "";
+      renderTranscript();
+    } else if (msg.type === "partial_transcript") {
+      partialLine = msg.text;
+      renderTranscript();
     }
   };
 
   ws.onclose = () => {
     if (!listening) return;
-    setStatus("reconnecting...", "err");
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 10000);
   };
 
-  ws.onerror = () => {
-    setStatus("connection error - retrying...", "err");
+  ws.onerror = () => {};
+}
+
+function renderTranscript() {
+  if (editingTranscript) return; // don't clobber what's being typed in the edit box
+  const tail = finalLines.slice(-40).join(" ");
+  transcriptEl.innerHTML = tail + (partialLine ? ` <span class="partial">${partialLine}</span>` : "");
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+// ---- transcript correction: pencil toggles an editable view of the
+// committed transcript. Saving sends the corrected text to the backend,
+// which replaces its rolling STT buffer with it — so a fixed word/phrase
+// actually feeds the *next* diagram extraction instead of just looking
+// right on screen. ----
+editTranscriptBtn.onclick = () => {
+  if (!editingTranscript) {
+    editingTranscript = true;
+    transcriptEditEl.value = finalLines.join(" ");
+    transcriptEl.style.display = "none";
+    transcriptEditEl.style.display = "block";
+    editTranscriptBtn.textContent = "✓";
+    editTranscriptBtn.title = "Save corrections";
+    editTranscriptBtn.classList.add("active");
+    transcriptEditEl.focus();
+  } else {
+    const corrected = transcriptEditEl.value.trim();
+    finalLines = corrected ? [corrected] : [];
+    partialLine = "";
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "transcript_edit", text: corrected }));
+    }
+    editingTranscript = false;
+    transcriptEl.style.display = "block";
+    transcriptEditEl.style.display = "none";
+    editTranscriptBtn.textContent = "✎";
+    editTranscriptBtn.title = "Edit transcript";
+    editTranscriptBtn.classList.remove("active");
+    renderTranscript();
+  }
+};
+
+// ---- mic capture: getUserMedia -> downsample to 16kHz mono -> Int16 PCM -> binary WS frames ----
+// ScriptProcessorNode is deprecated but universally supported and keeps this a
+// single file with no separate AudioWorklet module to load.
+async function startMic() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(mediaStream);
+  scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  const silence = audioCtx.createGain();
+  silence.gain.value = 0; // route through destination without audible playback/echo
+  source.connect(scriptNode);
+  scriptNode.connect(silence);
+  silence.connect(audioCtx.destination);
+
+  // Waveform tap: a second parallel connection off the SAME mic source used
+  // for STT capture above - never a second getUserMedia call.
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.75;
+  source.connect(analyser);
+  waveDataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  scriptNode.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const down = downsample(input, audioCtx.sampleRate, 16000);
+    ws.send(floatTo16BitPCM(down).buffer);
   };
 }
 
-function startRecognition() {
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = "en-US";
+function stopMic() {
+  if (scriptNode) { scriptNode.disconnect(); scriptNode.onaudioprocess = null; scriptNode = null; }
+  if (analyser) { analyser.disconnect(); analyser = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  waveDataArray = null;
+}
 
-  recognition.onresult = (event) => {
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        fullTranscript += " " + event.results[i][0].transcript;
-        transcriptEl.textContent = fullTranscript;
-        transcriptEl.scrollTop = transcriptEl.scrollHeight;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ text: (fullTranscript + " " + manualInput.value).trim() }));
-        }
-      }
-    }
-  };
+// ---- live waveform: one canvas, one rAF loop, cancelled whenever the mic is
+// off. Reflects LOCAL mic input only, via the AnalyserNode tapped above - it
+// keeps animating even if the Scribe WebSocket drops; the warning icon (see
+// showError/updateSttStatus) is what signals a connection problem, not this. ----
+const WAVE_BAR_COUNT = 28;
+const WAVE_BAR_GAP = 3;
+const WAVE_MIN_LEVEL = 0.12; // floor so "recording but silent" still reads as "on", not a flat line
+const WAVE_COLOR_ACTIVE = "#22c55e";
+const WAVE_COLOR_IDLE = "#333c50";
 
-  recognition.onerror = (event) => {
-    console.error("SpeechRecognition error:", event.error);
-    if (event.error === "no-speech") return; // fires constantly during silence, harmless
-    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-      setStatus("Mic permission denied — allow microphone access, or use the text box below.", "err");
-      return;
-    }
-    if (event.error === "network") {
-      setStatus("Speech recognition needs network access and failed — use the text box below instead.", "err");
-      return;
-    }
-    setStatus(`mic error: ${event.error} — use the text box below if this persists.`, "err");
-  };
+function resizeWaveCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = waveCanvas.getBoundingClientRect();
+  waveCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+  waveCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+  waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel coordinates from here on
+}
 
-  recognition.onend = () => { if (listening) { try { recognition.start(); } catch (e) {} } };
-  try {
-    recognition.start();
-  } catch (e) {
-    setStatus("Could not start microphone — use the text box below instead.", "err");
+function fillRoundedBar(x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  waveCtx.beginPath();
+  waveCtx.moveTo(x + rr, y);
+  waveCtx.arcTo(x + w, y, x + w, y + h, rr);
+  waveCtx.arcTo(x + w, y + h, x, y + h, rr);
+  waveCtx.arcTo(x, y + h, x, y, rr);
+  waveCtx.arcTo(x, y, x + w, y, rr);
+  waveCtx.closePath();
+  waveCtx.fill();
+}
+
+function drawFlatLine(color) {
+  const w = waveCanvas.clientWidth, h = waveCanvas.clientHeight;
+  waveCtx.clearRect(0, 0, w, h);
+  waveCtx.fillStyle = color;
+  fillRoundedBar(0, h / 2 - 1, w, 2, 1);
+}
+
+function drawBars() {
+  const w = waveCanvas.clientWidth, h = waveCanvas.clientHeight;
+  waveCtx.clearRect(0, 0, w, h);
+  analyser.getByteFrequencyData(waveDataArray);
+  const barWidth = (w - (WAVE_BAR_COUNT - 1) * WAVE_BAR_GAP) / WAVE_BAR_COUNT;
+  const binsPerBar = Math.max(1, Math.floor(waveDataArray.length / WAVE_BAR_COUNT));
+  waveCtx.fillStyle = WAVE_COLOR_ACTIVE;
+  for (let i = 0; i < WAVE_BAR_COUNT; i++) {
+    let sum = 0;
+    for (let j = 0; j < binsPerBar; j++) sum += waveDataArray[i * binsPerBar + j] || 0;
+    const level = Math.max(sum / binsPerBar / 255, WAVE_MIN_LEVEL); // floor keeps "silent but recording" visibly "on"
+    const barH = Math.max(2, level * h);
+    const x = i * (barWidth + WAVE_BAR_GAP);
+    fillRoundedBar(x, (h - barH) / 2, barWidth, barH, barWidth / 2);
   }
+  waveRafId = requestAnimationFrame(drawBars);
+}
+
+function startWaveLoop() {
+  resizeWaveCanvas();
+  if (waveRafId) cancelAnimationFrame(waveRafId);
+  drawBars();
+}
+
+function stopWaveLoop() {
+  if (waveRafId) { cancelAnimationFrame(waveRafId); waveRafId = null; }
+  resizeWaveCanvas();
+  drawFlatLine(WAVE_COLOR_IDLE);
+}
+
+window.addEventListener("resize", () => {
+  resizeWaveCanvas();
+  if (!waveRafId) drawFlatLine(WAVE_COLOR_IDLE); // the rAF loop redraws itself; only the idle line needs a manual repaint
+});
+
+resizeWaveCanvas();
+drawFlatLine(WAVE_COLOR_IDLE); // initial paint before anything starts
+
+function downsample(buffer, inRate, outRate) {
+  if (outRate === inRate) return buffer;
+  const ratio = inRate / outRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0, offsetBuffer = 0;
+  while (offsetResult < newLength) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+    let accum = 0, count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) { accum += buffer[i]; count++; }
+    result[offsetResult] = count ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+function floatTo16BitPCM(float32Array) {
+  const out = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
 }
 
 // Mermaid node/edge labels come straight from the LLM and can contain quotes,
-// brackets, etc. that break Mermaid's syntax mid-render. Strip anything that
-// isn't safe inside a quoted node label.
+// brackets, backticks, or an embedded "-->" that break Mermaid's syntax
+// mid-render. Strip/neutralize anything that isn't safe inside a quoted node
+// label. Non-ASCII (accents, emoji, CJK, ...) is deliberately left alone --
+// Mermaid renders UTF-8 inside a quoted label fine; only structural syntax
+// characters are the actual hazard.
 function sanitizeLabel(label) {
-  return String(label || "").replace(/["\[\]{}|]/g, "").slice(0, 80);
+  return String(label || "")
+    .replace(/-->/g, "→")            // would otherwise be parsed as an edge arrow
+    .replace(/[`"\[\]{}|]/g, "")     // quotes/brackets/braces/pipe/backtick
+    .slice(0, 80);
 }
 
 // Node ids/edge endpoints are unquoted identifiers in Mermaid syntax - a space,
@@ -230,8 +603,10 @@ function sanitizeId(id) {
 }
 
 let lastGoodDef = null;
+let lastSourceText = "";
+let showingSource = false;
 
-function renderDiagram(data) {
+function renderDiagram(data, sourceText) {
   if (!data.nodes || !data.nodes.length) return;
   let def = "flowchart TD\n";
   for (const n of data.nodes) {
@@ -242,10 +617,33 @@ function renderDiagram(data) {
     def += `  ${sanitizeId(e.from)} -->${label} ${sanitizeId(e.to)}\n`;
   }
 
+  lastSourceText = sourceText || "";
+  if (showingSource) sourceView.textContent = lastSourceText; // keep an open source view fresh
+
+  if (def === lastGoodDef) {
+    // Identical to what's already on screen (e.g. forcing again over the same
+    // text) - nothing meaningfully changed, so don't re-render or re-flash.
+    return;
+  }
+
   chartEl.textContent = def;
   chartEl.removeAttribute("data-processed");
   mermaid.run({ nodes: [chartEl] })
-    .then(() => { lastGoodDef = def; })
+    .then(() => {
+      lastGoodDef = def;
+      placeholderEl.style.display = "none";
+      chartWrap.classList.add("has-diagram");
+      sourceHint.style.display = "";
+      // Fade the new render in rather than popping it in instantly. The
+      // previous diagram stays visible (chartEl never gets hidden/emptied)
+      // until this point, so there's no flash-to-blank in between.
+      chartEl.style.display = "block";
+      chartEl.style.opacity = "0";
+      requestAnimationFrame(() => { chartEl.style.opacity = "1"; });
+      chartWrap.classList.remove("flash");
+      void chartWrap.offsetWidth; // restart animation
+      chartWrap.classList.add("flash");
+    })
     .catch((err) => {
       console.error("mermaid render failed, keeping last good diagram", err);
       if (lastGoodDef) {
@@ -254,6 +652,60 @@ function renderDiagram(data) {
         mermaid.run({ nodes: [chartEl] }).catch(() => {});
       }
     });
+}
+
+// ---- trust feature: click the diagram to see the exact transcript excerpt
+// it was generated from. One toggle, no per-node source mapping. ----
+chartWrap.addEventListener("click", () => {
+  if (!lastGoodDef) return; // nothing rendered yet, nothing to show the source of
+  showingSource = !showingSource;
+  if (showingSource) {
+    sourceView.textContent = lastSourceText || "(no source text recorded for this diagram)";
+    sourceView.style.display = "block";
+    chartEl.style.display = "none";
+    sourceHint.textContent = "Click again to return to the diagram";
+  } else {
+    sourceView.style.display = "none";
+    chartEl.style.display = "block";
+    sourceHint.textContent = "Click the diagram to see the transcript it came from";
+  }
+});
+
+// ---- dev-mode self-test: sanitizeLabel/sanitizeId against hostile input ----
+// No build step / test runner in this single-file frontend, so this runs in
+// the browser itself on localhost and logs PASS/FAIL to console. Covers the
+// Phase-1 acceptance case ("hostile text does not break rendering"): quotes,
+// brackets, --> sequences, backticks, and non-ASCII, in both labels and ids.
+function runSelfTests() {
+  const cases = [
+    { fn: sanitizeLabel, input: 'He said "recurse" [n-1]', desc: "quotes+brackets in label" },
+    { fn: sanitizeLabel, input: "step 1 --> step 2", desc: "arrow sequence in label" },
+    { fn: sanitizeLabel, input: "`code` {braces} |pipe|", desc: "backticks/braces/pipe in label" },
+    { fn: sanitizeLabel, input: "récursion 递归 🎓", desc: "non-ASCII in label (should pass through)" },
+    { fn: sanitizeId, input: "1.a node!", desc: "punctuation/space in id" },
+    { fn: sanitizeId, input: "递归", desc: "non-ASCII-only id (should fall back to n_unnamed)" },
+    { fn: sanitizeId, input: "", desc: "empty id (should fall back to n_unnamed)" },
+  ];
+  let pass = 0;
+  for (const c of cases) {
+    let out, ok;
+    try {
+      out = c.fn(c.input);
+      // Nothing structurally dangerous should survive: no unescaped quote,
+      // bracket, brace, pipe, backtick, or raw "-->" in the sanitized result.
+      ok = !/["\[\]{}|`]/.test(out) && !out.includes("-->");
+      if (c.fn === sanitizeId) ok = ok && /^[A-Za-z0-9_]+$/.test(out) && out.length > 0;
+    } catch (e) {
+      ok = false;
+      out = "<threw: " + e.message + ">";
+    }
+    console[ok ? "log" : "error"](`[selftest] ${ok ? "PASS" : "FAIL"} ${c.desc}: ${JSON.stringify(c.input)} -> ${JSON.stringify(out)}`);
+    if (ok) pass++;
+  }
+  console.log(`[selftest] sanitize: ${pass}/${cases.length} passed`);
+}
+if (["localhost", "127.0.0.1"].includes(location.hostname)) {
+  runSelfTests();
 }
 </script>
 </body>
