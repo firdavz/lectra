@@ -319,14 +319,22 @@ async def lecture_ws(ws: WebSocket):
             if not forced and text == last_extracted:
                 continue  # nothing new since last pass, skip the Gemini call
 
-            now = time.monotonic()
-            if now - last_attempt < MIN_EXTRACTION_GAP_SECONDS:
+            wait = MIN_EXTRACTION_GAP_SECONDS - (time.monotonic() - last_attempt)
+            if wait > 0:
                 # Hard floor, independent of `forced`: protects the API quota even
                 # if someone spams the ⚡ button faster than the client-side cooldown.
-                log.info("extraction skipped: MIN_EXTRACTION_GAP_SECONDS not elapsed (%.1fs since last attempt)",
-                          now - last_attempt)
-                continue
+                if not forced:
+                    log.info("extraction skipped: MIN_EXTRACTION_GAP_SECONDS not elapsed")
+                    continue
+                # A ⚡ press inside the floor is delayed, not dropped: the button
+                # stays "busy" until an answer arrives, so it must always get one.
+                log.info("forced extraction delayed %.1fs by MIN_EXTRACTION_GAP_SECONDS", wait)
+                await asyncio.sleep(wait)
+                text = window_text()
+                if not text:
+                    continue
 
+            now = time.monotonic()
             last_extracted = text
             last_attempt = now
             ok = await extract_and_send(text)

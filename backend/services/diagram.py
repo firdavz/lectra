@@ -15,7 +15,7 @@ from google.genai import types
 
 log = logging.getLogger("diagram")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 
 
 class Node(BaseModel):
@@ -81,23 +81,59 @@ def _get_client() -> genai.Client:
         _client = genai.Client(api_key=api_key)
     return _client
 
-SYSTEM = """You read a running lecture transcript and extract the HARD, confusing
-part as a small flowchart.
+SYSTEM = """You read a running lecture transcript and turn the idea being explained into a
+small flowchart. The transcript is live speech-to-text: expect filler words
+(um, uh, like), false starts, unfinished sentences and small mis-hearings.
 
 Rules:
-1. If the transcript is filler talk with no real conceptual structure yet
-   (greetings, "let's begin", small talk, silence, off-topic chatter), return
-   exactly {"nodes": [], "edges": []} -- do not invent structure that isn't there.
-2. Otherwise, prefer 4 to 10 nodes that cover the hard part being explained.
-3. Keep every node and edge label under about 6 words.
+1. Return exactly {"nodes": [], "edges": []} ONLY if the transcript contains no
+   explanation at all -- just greetings, logistics ("can you hear me", "let's
+   begin", announcements) or small talk. If the speaker is explaining anything
+   -- a process, steps, causes and effects, a comparison, or how parts relate --
+   draw it, even when the explanation is informal, rambling or incomplete.
+2. If several ideas are present, diagram the hardest or most important one,
+   using 4 to 10 nodes.
+3. Keep every node and edge label under about 6 words. Leave out filler words.
 4. Output ONLY raw JSON, no markdown code fences, no commentary before or
    after it, in exactly this shape:
    {"nodes": [{"id": "1", "label": "..."}], "edges": [{"from": "1", "to": "2", "label": "..."}]}
 """
 
+# Enforced by the API, not just described in the prompt: with the shape only
+# described in text, flash-lite was seen dropping every edge's "to". The
+# FlowchartGraph check still runs afterwards -- a schema can't verify that an
+# edge's ids point at nodes that actually exist.
+FLOWCHART_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "label": {"type": "string"}},
+                "required": ["id", "label"],
+            },
+        },
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"},
+                    "label": {"type": "string"},
+                },
+                "required": ["from", "to"],
+            },
+        },
+    },
+    "required": ["nodes", "edges"],
+}
+
 _CONFIG = types.GenerateContentConfig(
     system_instruction=SYSTEM,
     response_mime_type="application/json",
+    response_json_schema=FLOWCHART_SCHEMA,
 )
 
 
