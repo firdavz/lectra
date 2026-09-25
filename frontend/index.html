@@ -218,11 +218,15 @@
   #chartWrap.has-map { background-image: var(--canvas-glow); background-size: 100% 100%; background-repeat: no-repeat; }
   #chartWrap.flash { animation: flash 0.6s ease; }
   @keyframes flash { 0% { box-shadow: inset 0 0 0 2px var(--accent-2); } 100% { box-shadow: inset 0 0 0 1px var(--border); } }
-  /* Dot grid; its size and offset follow the canvas zoom and pan (see updateGrid). */
+  /* Dot grid; its size and offset follow the canvas zoom and pan. updateGrid()
+     sets them as variables on #chartWrap, never on #cy itself: Cytoscape watches
+     its container's attributes and re-measures and restyles the whole graph on
+     every change, which froze the canvas while panning and zooming. */
   #cy {
     position: absolute; inset: 0; display: none; cursor: grab;
     background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.4px);
-    background-size: 24px 24px;
+    background-size: var(--grid-size, 24px 24px);
+    background-position: var(--grid-pos, 0 0);
   }
   #cy:active { cursor: grabbing; }
   .placeholder {
@@ -842,6 +846,11 @@ const GRID_SIZE = 24;
 const MOVE_MS = 350;
 const FRESH_MS = 4000; // how long new boxes glow
 const LAYOUT = { name: "dagre", rankDir: "TB", nodeSep: 40, rankSep: 55 };
+// A transparent 1px image for topic groups. Without any background image,
+// Cytoscape (3.31-3.34) flips a group's :backgrounding state on every draw and
+// restyles the group and all its boxes each frame, which froze the canvas
+// while scrolling, zooming or dragging (720 restyles per 60 scroll steps -> 0).
+const BLANK_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 const measureCtx = document.createElement("canvas").getContext("2d");
 measureCtx.font = `600 ${LABEL_FONT_SIZE}px ${LABEL_FONT_FAMILY}`;
@@ -922,6 +931,7 @@ function getCy() {
         style: {
           shape: "round-rectangle",
           "background-color": color("--topic-bg"),
+          "background-image": BLANK_IMAGE, // see BLANK_IMAGE
           "border-width": 1.5,
           "border-color": color("--topic-border"),
           padding: TOPIC_PADDING,
@@ -967,13 +977,14 @@ function getCy() {
   return cy;
 }
 
-// The dot grid (CSS background of #cy) moves and scales with the canvas.
+// The dot grid (CSS background of #cy) moves and scales with the canvas. Set on
+// #chartWrap, not #cy: see the #cy style for why.
 function updateGrid() {
   let size = GRID_SIZE * cy.zoom();
   while (size < 12) size *= 2; // keep zoomed-out dots from turning into a haze
   const pan = cy.pan();
-  cyEl.style.backgroundSize = `${size}px ${size}px`;
-  cyEl.style.backgroundPosition = `${pan.x}px ${pan.y}px`;
+  chartWrap.style.setProperty("--grid-size", `${size}px ${size}px`);
+  chartWrap.style.setProperty("--grid-pos", `${pan.x}px ${pan.y}px`);
   zoomLabel.textContent = `${Math.round(cy.zoom() * 100)}%`;
 }
 
@@ -1055,7 +1066,9 @@ function renderMap(topics, newIds, sourceText) {
   diagramTools.style.display = "";
   zoomControls.style.display = showingSource ? "none" : "";
   diagramHint.style.display = showingSource ? "none" : "";
-  if (!showingSource) cyEl.style.display = "block"; // visible before Cytoscape measures it
+  // Visible before Cytoscape measures it; only written when it changes, since
+  // any write to its container makes Cytoscape re-measure the whole graph.
+  if (!showingSource && cyEl.style.display !== "block") cyEl.style.display = "block";
   getCy();
 
   // A map that doesn't match the canvas (the server restarted without the
