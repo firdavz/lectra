@@ -2,8 +2,8 @@
 
 Speak through a lecture → server-relayed live transcription (ElevenLabs Scribe)
 → Gemini grows a **lecture map** in simple English for students still learning
-the language: one small flowchart per subtopic, side by side, nothing ever
-dropped → shown live on an interactive canvas (Cytoscape.js) with a quiz made
+the language: one small diagram per subtopic, side by side, nothing ever
+dropped, each drawn in the shape that fits its content → shown live on an interactive canvas (Cytoscape.js) with a quiz made
 from the map → every map update is persisted with the speech it came from,
 browsable via a small REST API.
 
@@ -20,7 +20,12 @@ map; reload the page for a new one). Roughly every 20s the map grows with what
 you explained (greetings and logistics like "can you hear me" add nothing).
 Hit **⚡** to update it right away. New boxes glow for a few seconds; a new
 subtopic — or the same one after 5 minutes or 10 boxes — starts a new group to
-the right.
+the right. Each topic is drawn in the shape that fits it, picked by Gemini:
+⚙️ **process** (steps and causes, top to bottom), ⏳ **timeline** (events in
+order, left to right, e.g. a life story), 💡 **concept** (a main idea in the
+middle with its parts around it), ⚖️ **comparison** (the compared things above
+their features). Introductions, adverts and talk about the video itself are
+skipped.
 
 On the map: scroll or drag empty space to move around, pinch or Ctrl + scroll
 to zoom (or − / + at the bottom right), drag boxes or whole topics to
@@ -47,6 +52,7 @@ in text the map already covers doesn't add boxes twice.
 | Gemini output shape enforced via `response_json_schema`; Pydantic still checks edges point at real nodes | ✅ Even a prompt telling the model to drop `to` gets `to` back with the schema |
 | Growing map rules: boxes only added, duplicates reused, bad arrows dropped, full topic continues in a new group, resume validation | ✅ 22 unit checks on `backend/services/topics.py` |
 | Live loop sends only speech the map doesn't cover yet; map grows across updates; resume after reconnect; pasted transcript split into updates (each sentence once, in order), corrections not re-sent; a hung Gemini call cut off after 30s and retried | ✅ WebSocket integration test with a fake Scribe and fake Gemini (26 checks) |
+| Diagram kinds, real Gemini | ✅ 4 transcripts: a biography video became a concept overview + a timeline (its "improve your English" hook skipped), photosynthesis a process, plant vs animal cells a comparison with shared features linked to both, "what is an ecosystem" a two-level concept map. Layouts per kind checked in headless Chrome (10 checks) |
 | Paste + ⚡ with the mic off, real Gemini | ✅ Headless Chrome on the running app: the 6-paragraph elephant speech became 6 matching topics, 22 boxes, in about a minute |
 | Simple-English prompt on a real lecture (elephant talk, 6 pieces) | ✅ Live Gemini: arrows read as simple sentences ("Mud bath protects Wrinkled skin"), topics split by subject; the occasional odd arrow remains |
 | Lecture map canvas: topic groups side by side, finished topics never move, scroll = move / pinch = zoom around the pointer, zoom buttons, follow mode, Tidy, Source, glow, quiz (answers, highlight, no ambiguous options), resume on reconnect | ✅ 45 checks in headless Chrome driving the real page with real mouse events |
@@ -122,10 +128,11 @@ live WS message; the REST API is the same data for anything already persisted.
   you're burning quota too fast.
 - Gemini model used: `gemini-3.5-flash-lite` (configurable — see Config).
   Its free tier allows 15 requests/minute; the app uses about 3/minute. The
-  system prompt asks for simple everyday words (boxes = things, arrows = short
-  verbs), every "box → arrow → box" to read as a true simple sentence, emoji
-  only on concrete things, and nothing for greetings, logistics and small
-  talk.
+  system prompt picks a diagram kind per topic (process, timeline, concept,
+  comparison) with writing rules for each, asks for simple everyday words,
+  every "box → arrow → box" to read as a true simple sentence, names instead
+  of roles, emoji only on concrete things, and nothing for greetings,
+  logistics, adverts or talk about the video itself.
 - No auth of any kind — anyone who can reach the server can read/delete any
   session or diagram via the REST API. Fine for local/single-user use; would
   need addressing before deploying this anywhere multi-user or public.
@@ -137,8 +144,10 @@ live WS message; the REST API is the same data for anything already persisted.
 frontend/index.html    Browser: mic capture (getUserMedia -> downsample to
                         16kHz PCM16 -> binary WS frames) -> WebSocket ->
                         draws the lecture map on a Cytoscape.js canvas (topic
-                        groups, dagre layout, only new boxes added; scroll to
-                        move, pinch to zoom, Fit/Tidy/Source), quiz panel,
+                        groups, each in its kind's layout: dagre top-down or
+                        left-right, radial tree for concepts; only new boxes
+                        added; scroll to move, pinch to zoom, Fit/Tidy/Source),
+                        quiz panel,
                         live transcript, recording timer, next-update
                         countdown; sends the map back on reconnect
 backend/main.py         FastAPI + WebSocket: relays audio to Scribe, keeps a
@@ -153,8 +162,9 @@ backend/services/
   diagram.py              Async Gemini call: map so far + new speech ->
                            schema-enforced "what to add" JSON
                            (GeminiParseError on anything that doesn't fit)
-  topics.py               The lecture map: merges Gemini's additions (topics,
-                           box ids, duplicates, topic size limits), no I/O
+  topics.py               The lecture map: merges Gemini's additions (topics
+                           and their kinds, box ids, duplicates, topic size
+                           limits), no I/O
 ```
 
 ## Roadmap (not built yet)
