@@ -17,7 +17,8 @@ from backend.db import (
     create_session as db_create_session,
     get_session_factory,
 )
-from backend.services.diagram import GeminiParseError, ModelNotFoundError, extract_flowchart
+from backend.services.diagram import GeminiParseError, ModelNotFoundError, extract_update
+from backend.services.topics import apply_update
 
 log = logging.getLogger("api")
 
@@ -107,17 +108,18 @@ async def delete_diagram(diagram_id: str):
 
 @router.post("/process")
 async def process_text(body: ProcessBody):
-    """Immediate, non-live extraction: text -> diagram, persisted under its own
+    """Immediate, non-live extraction: text -> lecture map, persisted under its own
     ad-hoc session so it fits the same schema as live-generated diagrams."""
     s = await db_create_session(title="API: /api/process")
+    topics: list[dict] = []
     try:
-        graph = await extract_flowchart(body.text)
+        apply_update(topics, await extract_update(topics, "", body.text, current_full=False))
     except ModelNotFoundError as e:
         raise HTTPException(500, str(e))
     except GeminiParseError as e:
         raise HTTPException(502, f"Gemini returned invalid flowchart JSON: {e}")
 
-    graph_json = json.dumps(graph)
+    graph_json = json.dumps({"topics": topics})
     factory = get_session_factory()
     async with factory() as db:
         d = Diagram(session_id=s.id, graph_json=graph_json, source_text=body.text)

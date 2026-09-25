@@ -20,6 +20,17 @@
     --amber: #f59e0b;
     --red: #ef4444;
     --blue: #3b82f6;
+    /* lecture map canvas */
+    --canvas-bg: #0f131b;
+    --grid-dot: #273044;
+    --node-bg: #1b2130;
+    --node-border: #22c55e;
+    --node-text: #e7e9ee;
+    --edge: #8b92a5;
+    --topic-bg: #141a26;
+    --topic-border: #2f3a52;
+    --topic-title: #c7cbd6;
+    --highlight: #f59e0b;
   }
   * { box-sizing: border-box; }
   body {
@@ -109,20 +120,66 @@
   .diagram-tools button { padding: 0.3rem 0.7rem; font-size: 0.78rem; border-radius: 7px; }
   .diagram-tools button.active { background: var(--accent-dim); border-color: var(--accent); }
 
+  /* Map on the left, quiz on the right; stacked on narrow screens. */
+  .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: stretch; }
+  @media (max-width: 900px) { .map-layout { grid-template-columns: minmax(0, 1fr); } }
+
   /* Cytoscape needs a container with a real size, so the canvas area has a fixed height. */
-  #chartWrap { position: relative; height: min(62vh, 560px); min-height: 340px; border-radius: 10px; }
+  #chartWrap {
+    position: relative; height: min(70vh, 680px); min-height: 360px;
+    border-radius: 10px; overflow: hidden; background: var(--canvas-bg);
+  }
   #chartWrap.flash { animation: flash 0.6s ease; }
   @keyframes flash { 0% { box-shadow: inset 0 0 0 2px var(--accent); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
-  #cy { position: absolute; inset: 0; display: none; opacity: 1; transition: opacity 0.3s ease; }
+  /* Dot grid; its size and offset follow the canvas zoom and pan (see updateGrid). */
+  #cy {
+    position: absolute; inset: 0; display: none; cursor: grab;
+    background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.4px);
+    background-size: 24px 24px;
+  }
+  #cy:active { cursor: grabbing; }
   .placeholder {
     position: absolute; inset: 0; margin: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-size: 1.05rem;
   }
   #sourceView {
     position: absolute; inset: 0; display: none; font-size: 0.85rem; line-height: 1.55; color: #c7cbd6;
-    white-space: pre-wrap; text-align: left; overflow-y: auto; padding: 0.2rem 0.3rem;
+    white-space: pre-wrap; text-align: left; overflow-y: auto; padding: 0.8rem 1rem;
   }
+  .zoom-controls {
+    position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 2px;
+    background: var(--card); border: 1px solid var(--card-border); border-radius: 10px; padding: 3px;
+  }
+  .zoom-controls button {
+    width: 32px; height: 32px; padding: 0; border: none; border-radius: 7px; background: transparent;
+    font-size: 1rem; line-height: 1;
+  }
+  .zoom-controls button:hover:not(:disabled) { background: #242c3f; }
+  #zoomLabel { min-width: 3.2rem; text-align: center; font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   #diagramHint { color: var(--muted); font-size: 0.72rem; text-align: center; margin: 0.6rem 0 0; }
+
+  /* ---- quiz side panel ---- */
+  .quiz {
+    background: var(--canvas-bg); border-radius: 10px; padding: 1rem;
+    display: flex; flex-direction: column; gap: 0.8rem; min-height: 0;
+  }
+  .quiz-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .quiz-head h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  #quizScore { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #quizBody { display: flex; flex-direction: column; gap: 0.8rem; }
+  .quiz-empty { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+  .quiz-question { margin: 0; font-size: 1.05rem; line-height: 1.5; }
+  .quiz-question .blank {
+    display: inline-block; min-width: 3.5rem; border-bottom: 2px solid var(--highlight);
+    color: var(--highlight); text-align: center; font-weight: 700;
+  }
+  .quiz-options { display: flex; flex-direction: column; gap: 0.45rem; }
+  .quiz-options button { text-align: left; font-weight: 500; }
+  .quiz-options button.right { background: var(--accent-dim); border-color: var(--accent); }
+  .quiz-options button.wrong { background: #2a1414; border-color: var(--red); }
+  .quiz-options button:disabled { opacity: 1; cursor: default; }
+  .quiz-feedback { margin: 0; font-size: 0.9rem; line-height: 1.5; }
+  #quizNext { align-self: flex-start; }
 
   /* ---- Live transcript (sits above the diagram, editable) ---- */
   .transcript-card { position: relative; margin-bottom: 1.2rem; padding-bottom: 2.8rem; }
@@ -179,19 +236,30 @@
 
   <div class="card">
     <div class="card-head">
-      <h2>Diagram</h2>
+      <h2>Lecture map</h2>
       <div class="diagram-tools" id="diagramTools" style="display:none">
-        <button type="button" id="fitBtn" title="Fit the whole diagram in view">⤢ Fit</button>
-        <button type="button" id="tidyBtn" title="Re-arrange the boxes">↻ Tidy</button>
-        <button type="button" id="sourceBtn" title="Show the transcript this diagram came from">📄 Source</button>
+        <button type="button" id="tidyBtn" title="Re-arrange all the boxes">↻ Tidy</button>
+        <button type="button" id="sourceBtn" title="Show the speech behind the newest boxes">📄 Source</button>
       </div>
     </div>
-    <div id="chartWrap">
-      <p class="placeholder" id="placeholder">Waiting for something diagram-worthy…</p>
-      <div id="cy"></div>
-      <div id="sourceView"></div>
+    <div class="map-layout">
+      <div id="chartWrap">
+        <p class="placeholder" id="placeholder">Waiting for something diagram-worthy…</p>
+        <div id="cy"></div>
+        <div id="sourceView"></div>
+        <div class="zoom-controls" id="zoomControls" style="display:none">
+          <button type="button" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">−</button>
+          <span id="zoomLabel">100%</span>
+          <button type="button" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">+</button>
+          <button type="button" id="fitBtn" title="Show the whole map (and follow new boxes)" aria-label="Fit the whole map in view">⤢</button>
+        </div>
+      </div>
+      <aside class="quiz" id="quizPanel">
+        <div class="quiz-head"><h3>Quiz</h3><span id="quizScore"></span></div>
+        <div id="quizBody"><p class="quiz-empty">Questions appear here once the map has a few arrows.</p></div>
+      </aside>
     </div>
-    <p id="diagramHint" style="display:none">Drag boxes to move them · scroll to zoom · drag empty space to pan</p>
+    <p id="diagramHint" style="display:none">Scroll or drag to move around · pinch or Ctrl + scroll to zoom · drag boxes or whole topics to rearrange</p>
   </div>
 
 <script>
@@ -212,9 +280,15 @@ const placeholderEl = document.getElementById("placeholder");
 const sourceView = document.getElementById("sourceView");
 const diagramTools = document.getElementById("diagramTools");
 const diagramHint = document.getElementById("diagramHint");
-const fitBtn = document.getElementById("fitBtn");
 const tidyBtn = document.getElementById("tidyBtn");
 const sourceBtn = document.getElementById("sourceBtn");
+const zoomControls = document.getElementById("zoomControls");
+const zoomInBtn = document.getElementById("zoomInBtn");
+const zoomOutBtn = document.getElementById("zoomOutBtn");
+const zoomLabel = document.getElementById("zoomLabel");
+const fitBtn = document.getElementById("fitBtn");
+const quizBody = document.getElementById("quizBody");
+const quizScore = document.getElementById("quizScore");
 const timerLabel = document.getElementById("timerLabel");
 
 let ws;
@@ -388,6 +462,8 @@ function connect() {
 
   ws.onopen = () => {
     reconnectDelay = 1000;
+    // Carry on the map already on screen (after a reconnect, or Start after Stop).
+    if (mapTopics.length) ws.send(JSON.stringify({ type: "resume", topics: mapTopics }));
     if (listening) ws.send(JSON.stringify({ type: "stt_start" }));
   };
 
@@ -397,7 +473,7 @@ function connect() {
       extractionIntervalSeconds = msg.extraction_interval_seconds || extractionIntervalSeconds;
       if (listening) resetRing();
     } else if (msg.type === "diagram") {
-      renderDiagram(msg.graph, msg.source_text || "");
+      renderMap(msg.topics, msg.new_ids || [], msg.source_text || "");
       genBtn.classList.remove("busy");
       resetRing(); // an extraction just fired (timed or forced) - restart the wait
     } else if (msg.type === "empty") {
@@ -611,16 +687,25 @@ function floatTo16BitPCM(float32Array) {
   return out;
 }
 
-// ---- interactive diagram canvas: Cytoscape.js + dagre layout ----
-// Gemini's {nodes, edges} go in as plain graph data -- no diagram syntax to
-// build or escape. Boxes can be dragged, the canvas pans and zooms.
+// ---- lecture map canvas: Cytoscape.js + dagre ----
+// The server sends the whole map (topics, each a small flowchart) after every
+// update. The canvas only adds what's new, so finished topics -- and boxes the
+// user has moved there -- stay put. Each topic is a labelled group (a compound
+// node) laid out top to bottom; groups sit side by side, left to right.
 const LABEL_FONT_FAMILY = '-apple-system, "Segoe UI", Roboto, sans-serif';
 const LABEL_FONT_SIZE = 13;
 const LABEL_LINE_HEIGHT = 1.25;
 const NODE_TEXT_MAX_WIDTH = 170;
 const NODE_PADDING = 14;
-const FIT_PADDING = 24;
-const FIT_MAX_ZOOM = 1.3; // don't blow a 3-box diagram up to fill the whole canvas
+const TOPIC_PADDING = 22;
+const TOPIC_GAP = 80; // space between topic groups
+const FIT_PADDING = 32;
+const FIT_MAX_ZOOM = 1.2; // don't blow a 3-box map up to fill the whole canvas
+const ZOOM_STEP = 1.25; // + / − buttons
+const WHEEL_ZOOM_SPEED = 0.003; // pinch / Ctrl + wheel
+const GRID_SIZE = 24;
+const MOVE_MS = 350;
+const FRESH_MS = 4000; // how long new boxes glow
 const LAYOUT = { name: "dagre", rankDir: "TB", nodeSep: 40, rankSep: 55 };
 
 const measureCtx = document.createElement("canvas").getContext("2d");
@@ -647,11 +732,15 @@ function nodeSize(label) {
   };
 }
 
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
 let cy = null;
-let lastGraphKey = null;
+let mapTopics = []; // latest map from the server; sent back on reconnect ("resume")
 let lastSourceText = "";
 let showingSource = false;
-let fitPending = false; // a layout ran while the canvas was hidden behind the source view
+let followView = true; // keep the whole map in view as it grows, until the user moves the view
+let programmaticView = 0; // > 0 while we move the viewport ourselves
+let fitPending = false; // the map grew while the canvas was hidden behind the source view
 
 function getCy() {
   if (cy) return cy;
@@ -660,20 +749,21 @@ function getCy() {
   const color = (name) => css.getPropertyValue(name).trim();
   cy = cytoscape({
     container: cyEl,
-    minZoom: 0.3,
-    maxZoom: 2.5,
+    minZoom: 0.2,
+    maxZoom: 3,
+    boxSelectionEnabled: false,
     style: [
       {
-        selector: "node",
+        selector: ".box",
         style: {
           shape: "round-rectangle",
           width: "data(w)",
           height: "data(h)",
-          "background-color": "#1b2130",
+          "background-color": color("--node-bg"),
           "border-width": 2,
-          "border-color": color("--accent"),
+          "border-color": color("--node-border"),
           label: "data(label)",
-          color: color("--text"),
+          color: color("--node-text"),
           "font-family": LABEL_FONT_FAMILY,
           "font-size": LABEL_FONT_SIZE,
           "font-weight": 600,
@@ -682,117 +772,404 @@ function getCy() {
           "text-max-width": NODE_TEXT_MAX_WIDTH,
           "text-valign": "center",
           "text-halign": "center",
+          "underlay-color": color("--highlight"),
+          "underlay-padding": 8,
+          "underlay-shape": "round-rectangle",
+          "underlay-opacity": 0,
+          "transition-property": "opacity, underlay-opacity",
+          "transition-duration": 0.6,
         },
       },
-      { selector: "node:selected", style: { "border-color": color("--amber"), "border-width": 3 } },
+      { selector: ".box.fresh", style: { "underlay-opacity": 0.4 } },
+      { selector: ".box.entering", style: { opacity: 0 } },
+      { selector: ".box:selected", style: { "border-color": color("--highlight"), "border-width": 3 } },
+      {
+        selector: ".topic",
+        style: {
+          shape: "round-rectangle",
+          "background-color": color("--topic-bg"),
+          "border-width": 1.5,
+          "border-color": color("--topic-border"),
+          padding: TOPIC_PADDING,
+          label: "data(label)",
+          color: color("--topic-title"),
+          "font-family": LABEL_FONT_FAMILY,
+          "font-size": 15,
+          "font-weight": 700,
+          "text-valign": "top",
+          "text-halign": "center",
+          "text-margin-y": -6,
+        },
+      },
       {
         selector: "edge",
         style: {
           width: 2,
           "curve-style": "bezier",
-          "line-color": color("--muted"),
+          "line-color": color("--edge"),
           "target-arrow-shape": "triangle",
-          "target-arrow-color": color("--muted"),
+          "target-arrow-color": color("--edge"),
           label: "data(label)",
-          color: color("--muted"),
+          color: color("--edge"),
           "font-family": LABEL_FONT_FAMILY,
           "font-size": 11,
-          "text-background-color": color("--card"),
+          "text-background-color": color("--topic-bg"),
           "text-background-opacity": 1,
           "text-background-padding": 2,
         },
       },
+      { selector: ".box.quiz-hl", style: { "border-color": color("--highlight"), "border-width": 3 } },
+      {
+        selector: "edge.quiz-hl",
+        style: { width: 3, "line-color": color("--highlight"), "target-arrow-color": color("--highlight"), color: color("--highlight") },
+      },
     ],
   });
+  cy.on("viewport", () => {
+    updateGrid();
+    if (!programmaticView) followView = false; // the user took over; stop auto-fitting
+  });
+  updateGrid();
   return cy;
 }
 
-function fitView() {
+// The dot grid (CSS background of #cy) moves and scales with the canvas.
+function updateGrid() {
+  let size = GRID_SIZE * cy.zoom();
+  while (size < 12) size *= 2; // keep zoomed-out dots from turning into a haze
+  const pan = cy.pan();
+  cyEl.style.backgroundSize = `${size}px ${size}px`;
+  cyEl.style.backgroundPosition = `${pan.x}px ${pan.y}px`;
+  zoomLabel.textContent = `${Math.round(cy.zoom() * 100)}%`;
+}
+
+// Move the viewport without it counting as the user taking over.
+function setViewport(target, animate) {
+  programmaticView++;
+  if (animate) {
+    cy.animate(target, { duration: MOVE_MS, easing: "ease-in-out-cubic", complete: () => programmaticView-- });
+  } else {
+    cy.viewport(target);
+    programmaticView--;
+  }
+}
+
+function fitView(animate) {
   fitPending = false;
-  cy.fit(undefined, FIT_PADDING);
-  if (cy.zoom() > FIT_MAX_ZOOM) {
-    cy.zoom(FIT_MAX_ZOOM);
-    cy.center();
+  followView = true;
+  const eles = cy.elements();
+  if (!eles.length) return;
+  const bb = eles.boundingBox({ includeLabels: true });
+  const w = cy.width(), h = cy.height();
+  const zoom = clamp(Math.min((w - 2 * FIT_PADDING) / bb.w, (h - 2 * FIT_PADDING) / bb.h), cy.minZoom(), FIT_MAX_ZOOM);
+  setViewport({ zoom, pan: { x: (w - zoom * (bb.x1 + bb.x2)) / 2, y: (h - zoom * (bb.y1 + bb.y2)) / 2 } }, animate);
+}
+
+// Lay out the given topics' boxes (dagre, top to bottom) and put each group
+// just right of the one before it; other topics don't move. `starts` (box id ->
+// position) makes boxes glide there from where they were instead of jumping.
+function layoutTopics(topicIds, starts) {
+  for (const id of topicIds) {
+    const kids = cy.getElementById(id).children();
+    if (kids.empty()) continue;
+    kids.union(kids.connectedEdges()).layout({ ...LAYOUT, fit: false, animate: false }).run();
+    const i = mapTopics.findIndex((t) => t.id === id);
+    const prev = i > 0 ? cy.getElementById(mapTopics[i - 1].id) : null;
+    const left = prev && prev.nonempty() ? prev.boundingBox({ includeLabels: true }).x2 + TOPIC_GAP : 0;
+    const top = prev && prev.nonempty() ? prev.children().boundingBox().y1 : 0; // groups share a top line
+    const bb = kids.boundingBox();
+    kids.shift({ x: left + TOPIC_PADDING - bb.x1, y: top - bb.y1 });
+  }
+  if (followView) {
+    if (showingSource) fitPending = true;
+    else fitView(!!starts);
+  }
+  if (!starts) return;
+  for (const [id, from] of starts) {
+    const n = cy.getElementById(id);
+    const to = { ...n.position() };
+    if (Math.abs(from.x - to.x) < 0.5 && Math.abs(from.y - to.y) < 0.5) continue;
+    n.position(from);
+    n.animate({ position: to }, { duration: MOVE_MS, easing: "ease-in-out-cubic" });
   }
 }
 
-function runLayout() {
-  cy.layout({
-    ...LAYOUT,
-    fit: false,
-    stop: () => { if (showingSource) fitPending = true; else fitView(); },
-  }).run();
+// New boxes start on a box they connect to (or under their topic), so they
+// grow out of the map instead of flying in from a corner.
+function startPositions(added, starts) {
+  const fresh = new Set(added.map((n) => n.id()));
+  for (const n of added) {
+    const anchor = n.neighborhood(".box").filter((x) => !fresh.has(x.id()));
+    const siblings = n.parent().children().filter((x) => !fresh.has(x.id()));
+    if (anchor.nonempty()) {
+      starts.set(n.id(), { ...anchor[0].position() });
+    } else if (siblings.nonempty()) {
+      const bb = siblings.boundingBox();
+      starts.set(n.id(), { x: (bb.x1 + bb.x2) / 2, y: bb.y2 + 60 });
+    }
+  }
 }
 
-function renderDiagram(data, sourceText) {
-  if (!data.nodes || !data.nodes.length) return;
-  lastSourceText = sourceText || "";
+function renderMap(topics, newIds, sourceText) {
+  if (!topics || !topics.length) return;
+  mapTopics = topics;
+  lastSourceText = sourceText || lastSourceText;
   if (showingSource) sourceView.textContent = lastSourceText; // keep an open source view fresh
-
-  const graphKey = JSON.stringify([data.nodes, data.edges || []]);
-  if (graphKey === lastGraphKey) {
-    // Identical to what's already on screen (e.g. forcing again over the same
-    // text): keep it, including however the user has arranged the boxes.
-    return;
-  }
-  lastGraphKey = graphKey;
-
-  // Ids are prefixed so a node "1" and an edge can never collide, and a
-  // duplicate or dangling id is skipped rather than making Cytoscape throw.
-  const nodeIds = new Set();
-  const elements = [];
-  for (const n of data.nodes) {
-    const id = String(n.id);
-    if (nodeIds.has(id)) continue;
-    nodeIds.add(id);
-    const label = String(n.label || "");
-    elements.push({ group: "nodes", data: { id: "n" + id, label, ...nodeSize(label) } });
-  }
-  (data.edges || []).forEach((e, i) => {
-    if (!nodeIds.has(String(e.from)) || !nodeIds.has(String(e.to))) return;
-    elements.push({
-      group: "edges",
-      data: { id: "e" + i, source: "n" + e.from, target: "n" + e.to, label: e.label || "" },
-    });
-  });
 
   placeholderEl.style.display = "none";
   diagramTools.style.display = "";
-  diagramHint.style.display = "";
+  zoomControls.style.display = showingSource ? "none" : "";
+  diagramHint.style.display = showingSource ? "none" : "";
   if (!showingSource) cyEl.style.display = "block"; // visible before Cytoscape measures it
+  getCy();
 
-  getCy().batch(() => {
-    cy.elements().remove();
-    cy.add(elements);
+  // A map that doesn't match the canvas (the server restarted without the
+  // resume) replaces it; otherwise only what's new gets added.
+  const clash = topics.some((t) => t.nodes.some((n) => {
+    const el = cy.getElementById(n.id);
+    return el.nonempty() && el.data("text") !== n.label;
+  }));
+  if (clash) cy.elements().remove();
+
+  const starts = new Map();
+  cy.nodes(".box").forEach((n) => starts.set(n.id(), { ...n.position() }));
+  const changed = new Set();
+  const added = [];
+  cy.batch(() => {
+    topics.forEach((t, i) => {
+      const title = `${i + 1}. ${t.title}`;
+      const group = cy.getElementById(t.id);
+      if (group.empty()) {
+        cy.add({ group: "nodes", data: { id: t.id, label: title }, classes: "topic", selectable: false });
+        changed.add(t.id);
+      } else if (group.data("label") !== title) {
+        group.data("label", title);
+      }
+      for (const n of t.nodes) {
+        if (cy.getElementById(n.id).nonempty()) continue;
+        const label = n.emoji ? `${n.emoji} ${n.label}` : n.label;
+        added.push(cy.add({
+          group: "nodes",
+          data: { id: n.id, parent: t.id, text: n.label, label, ...nodeSize(label) },
+          classes: "box entering fresh",
+        }));
+        changed.add(t.id);
+      }
+      for (const e of t.edges) {
+        const id = `e:${e.from}:${e.to}`;
+        if (cy.getElementById(id).nonempty() || cy.getElementById(e.from).empty() || cy.getElementById(e.to).empty()) continue;
+        cy.add({ group: "edges", data: { id, source: e.from, target: e.to, label: e.label || "" } });
+        changed.add(t.id);
+      }
+    });
   });
-  runLayout();
+  if (!changed.size) return;
 
-  // Fade the new diagram in and flash the frame, so a change is noticeable.
-  cyEl.style.opacity = "0";
-  requestAnimationFrame(() => { cyEl.style.opacity = "1"; });
+  startPositions(added, starts);
+  layoutTopics(topics.map((t) => t.id).filter((id) => changed.has(id)), starts.size ? starts : null);
+
+  // New boxes fade in and glow for a few seconds (see the .entering/.fresh styles).
+  const fresh = cy.collection(added);
+  setTimeout(() => fresh.removeClass("entering"), 30);
+  setTimeout(() => fresh.removeClass("fresh"), FRESH_MS);
   chartWrap.classList.remove("flash");
   void chartWrap.offsetWidth; // restart animation
   chartWrap.classList.add("flash");
+  quizMapChanged();
 }
 
-fitBtn.onclick = () => fitView();
-tidyBtn.onclick = () => runLayout();
+// Figma-style navigation: scroll / two-finger swipe moves the canvas; pinch
+// (which browsers report as Ctrl + wheel) or Ctrl + scroll zooms around the
+// pointer. Handled here in the capture phase, before Cytoscape's own wheel
+// zoom -- that turned every small touchpad scroll event into a zoom step.
+chartWrap.addEventListener("wheel", (e) => {
+  if (!cy || showingSource) return; // the source text scrolls normally
+  e.preventDefault();
+  e.stopPropagation();
+  followView = false;
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? cy.height() : 1;
+  let dx = e.deltaX * unit, dy = e.deltaY * unit;
+  if (e.ctrlKey || e.metaKey) {
+    const r = cyEl.getBoundingClientRect();
+    const level = clamp(cy.zoom() * Math.exp(-clamp(dy, -50, 50) * WHEEL_ZOOM_SPEED), cy.minZoom(), cy.maxZoom());
+    cy.zoom({ level, renderedPosition: { x: e.clientX - r.left, y: e.clientY - r.top } });
+  } else {
+    if (e.shiftKey && !dx) { dx = dy; dy = 0; } // Shift + mouse wheel scrolls sideways
+    cy.panBy({ x: -dx, y: -dy });
+  }
+}, { capture: true, passive: false });
 
-// ---- trust feature: show the exact transcript excerpt the current diagram
-// was generated from, in place of the canvas. ----
+function zoomByStep(factor) {
+  followView = false;
+  const level = clamp(cy.zoom() * factor, cy.minZoom(), cy.maxZoom());
+  cy.animate({ zoom: { level, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } } }, { duration: 180 });
+}
+zoomInBtn.onclick = () => zoomByStep(ZOOM_STEP);
+zoomOutBtn.onclick = () => zoomByStep(1 / ZOOM_STEP);
+fitBtn.onclick = () => fitView(true);
+
+tidyBtn.onclick = () => {
+  const starts = new Map();
+  cy.nodes(".box").forEach((n) => starts.set(n.id(), { ...n.position() }));
+  followView = true;
+  layoutTopics(mapTopics.map((t) => t.id), starts);
+};
+
+// ---- trust feature: the exact speech behind the newest boxes, in place of the canvas ----
 sourceBtn.onclick = () => {
   showingSource = !showingSource;
   sourceBtn.classList.toggle("active", showingSource);
-  sourceView.textContent = lastSourceText || "(no source text recorded for this diagram)";
+  sourceView.textContent = lastSourceText || "(no speech recorded yet)";
   sourceView.style.display = showingSource ? "block" : "none";
   cyEl.style.display = showingSource ? "none" : "block";
-  diagramHint.style.display = showingSource ? "none" : "";
-  fitBtn.disabled = tidyBtn.disabled = showingSource; // they only act on the (hidden) canvas
+  zoomControls.style.display = diagramHint.style.display = showingSource ? "none" : "";
+  tidyBtn.disabled = showingSource; // it only acts on the (hidden) canvas
   if (!showingSource) {
     cy.resize(); // the window may have changed size while the canvas was hidden
-    if (fitPending) fitView();
+    if (fitPending) fitView(false);
   }
 };
+
+// ---- quiz: fill-in-the-blank questions made from the map's own arrows, so
+// they cost no extra Gemini call and use the same simple words ----
+const quiz = { current: null, asked: new Set(), right: 0, total: 0 };
+const boxText = (n) => (n.emoji ? `${n.emoji} ${n.label}` : n.label);
+
+function shuffle(items) {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function quizArrows() {
+  const out = [];
+  for (const t of mapTopics) {
+    const byId = new Map(t.nodes.map((n) => [n.id, n]));
+    for (const e of t.edges) {
+      if (e.label && byId.has(e.from) && byId.has(e.to)) out.push({ edge: e, from: byId.get(e.from), to: byId.get(e.to), topic: t });
+    }
+  }
+  return out;
+}
+
+function makeQuestion() {
+  const arrows = quizArrows();
+  const key = (a) => `${a.edge.from}:${a.edge.to}`;
+  let pool = arrows.filter((a) => !quiz.asked.has(key(a)));
+  if (!pool.length) {
+    quiz.asked.clear(); // every arrow asked once: start over
+    pool = arrows;
+  }
+  for (const a of shuffle(pool)) {
+    const blankIsTarget = Math.random() < 0.5;
+    const answer = blankIsTarget ? a.to : a.from;
+    const shown = blankIsTarget ? a.from : a.to;
+    // Wrong options: other boxes, same topic first (the most plausible ones),
+    // never one that would also make a true sentence here.
+    const taken = new Set([answer.label, shown.label].map((s) => s.toLowerCase()));
+    for (const x of arrows) {
+      if (x.edge.label !== a.edge.label) continue;
+      if (blankIsTarget && x.from.id === shown.id) taken.add(x.to.label.toLowerCase());
+      if (!blankIsTarget && x.to.id === shown.id) taken.add(x.from.label.toLowerCase());
+    }
+    const wrong = [];
+    for (const n of [...shuffle(a.topic.nodes), ...shuffle(mapTopics.flatMap((t) => t.nodes))]) {
+      if (wrong.length === 3) break;
+      if (taken.has(n.label.toLowerCase())) continue;
+      taken.add(n.label.toLowerCase());
+      wrong.push(n);
+    }
+    if (!wrong.length) continue;
+    quiz.asked.add(key(a));
+    return { arrow: a, blankIsTarget, answer, shown, options: shuffle([answer, ...wrong]), choice: null };
+  }
+  return null;
+}
+
+function renderQuiz() {
+  quizScore.textContent = quiz.total ? `${quiz.right} / ${quiz.total}` : "";
+  const q = quiz.current;
+  if (!q) {
+    quizBody.replaceChildren(el("p", "quiz-empty", "Questions appear here once the map has a few arrows."));
+    return;
+  }
+  const answered = q.choice !== null;
+  const blank = el("span", "blank", answered ? boxText(q.answer) : "?");
+  const shown = el("b", "", boxText(q.shown));
+  const question = el("p", "quiz-question");
+  const verb = ` ${q.arrow.edge.label} `;
+  if (q.blankIsTarget) question.append(shown, verb, blank);
+  else question.append(blank, verb, shown);
+
+  const options = el("div", "quiz-options");
+  for (const n of q.options) {
+    const b = el("button", "", boxText(n));
+    b.type = "button";
+    b.disabled = answered;
+    if (answered && n.id === q.answer.id) b.classList.add("right");
+    if (answered && n.id === q.choice.id && n.id !== q.answer.id) b.classList.add("wrong");
+    b.onclick = () => answerQuiz(n);
+    options.append(b);
+  }
+  const parts = [el("p", "quiz-empty", "Fill the gap:"), question, options];
+  if (answered) {
+    const right = q.choice.id === q.answer.id;
+    const sentence = `${q.arrow.from.label} ${q.arrow.edge.label} ${q.arrow.to.label}.`;
+    parts.push(el("p", "quiz-feedback", `${right ? "✅ Right!" : "❌ Not quite."} ${sentence}`));
+    const next = el("button", "", "Next question →");
+    next.type = "button";
+    next.id = "quizNext";
+    next.onclick = nextQuestion;
+    parts.push(next);
+  }
+  quizBody.replaceChildren(...parts);
+}
+
+function answerQuiz(choice) {
+  const q = quiz.current;
+  if (!q || q.choice) return;
+  q.choice = choice;
+  quiz.total++;
+  if (choice.id === q.answer.id) quiz.right++;
+  renderQuiz();
+  highlightArrow(q.arrow);
+}
+
+// Show the arrow the question was about on the map, panning to it if needed.
+function highlightArrow(a) {
+  if (!cy) return;
+  cy.elements(".quiz-hl").removeClass("quiz-hl");
+  const hl = cy.getElementById(a.from.id)
+    .union(cy.getElementById(a.to.id))
+    .union(cy.getElementById(`e:${a.edge.from}:${a.edge.to}`));
+  hl.addClass("quiz-hl");
+  if (showingSource) return;
+  const bb = hl.renderedBoundingBox();
+  if (bb.x1 < 0 || bb.y1 < 0 || bb.x2 > cy.width() || bb.y2 > cy.height()) {
+    followView = false;
+    cy.animate({ center: { eles: hl } }, { duration: MOVE_MS });
+  }
+}
+
+function nextQuestion() {
+  if (cy) cy.elements(".quiz-hl").removeClass("quiz-hl");
+  quiz.current = makeQuestion();
+  renderQuiz();
+}
+
+function quizMapChanged() {
+  if (!quiz.current) nextQuestion(); // a question in progress stays until answered
+}
 </script>
 </body>
 </html>

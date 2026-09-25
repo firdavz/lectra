@@ -1,9 +1,11 @@
 # Lecture → Diagram
 
 Speak through a lecture → server-relayed live transcription (ElevenLabs Scribe)
-→ Gemini spots the "hard part" and turns it into a small flowchart → shown
-live on an interactive canvas (Cytoscape.js) → every diagram is persisted with
-the exact transcript excerpt it came from, browsable via a small REST API.
+→ Gemini grows a **lecture map** in simple English for students still learning
+the language: one small flowchart per subtopic, side by side, nothing ever
+dropped → shown live on an interactive canvas (Cytoscape.js) with a quiz made
+from the map → every map update is persisted with the speech it came from,
+browsable via a small REST API.
 
 ## Quick start
 ```powershell
@@ -13,13 +15,19 @@ Then open **http://localhost:8010/** (redirects to the app) in **Chrome**.
 Needs `GEMINI_API_KEY` and `ELEVENLABS_API_KEY` in `.env` (copy from
 `.env.example` — see [Config](#config) below).
 
-Click **🎤** and talk; click it again to stop. A flowchart appears roughly
-every 20s once you've explained something (greetings and logistics like "can
-you hear me" correctly produce nothing). Hit **⚡** to generate one right away.
+Click **🎤** and talk; click it again to stop (Start again carries on the same
+map; reload the page for a new one). Roughly every 20s the map grows with what
+you explained (greetings and logistics like "can you hear me" add nothing).
+Hit **⚡** to update it right away. New boxes glow for a few seconds; a new
+subtopic — or the same one after 5 minutes or 10 boxes — starts a new group to
+the right.
 
-On the diagram: drag boxes to move them, scroll to zoom, drag empty space to
-pan. **⤢ Fit** brings everything back into view, **↻ Tidy** re-arranges the
-boxes, **📄 Source** shows the exact transcript excerpt it was built from.
+On the map: scroll or drag empty space to move around, pinch or Ctrl + scroll
+to zoom (or − / + at the bottom right), drag boxes or whole topics to
+rearrange. **⤢** shows the whole map and follows new boxes again, **↻ Tidy**
+re-arranges everything, **📄 Source** shows the speech behind the newest
+boxes. The **Quiz** panel asks fill-the-gap questions built from the map's own
+arrows and highlights the answer on the map.
 
 **No mic?** `POST /api/process` (see [REST API](#rest-api-phase-4)) runs the
 same Gemini extraction on pasted text.
@@ -33,7 +41,10 @@ same Gemini extraction on pasted text.
 | Speech Scribe hasn't committed yet still feeds extraction | ✅ Live: 36s with no VAD commit still produced an extraction at the 20s tick |
 | Closing a tab stops its extraction loop | ✅ With a fake Scribe, and shown to fail on the code before the fix |
 | Gemini output shape enforced via `response_json_schema`; Pydantic still checks edges point at real nodes | ✅ Even a prompt telling the model to drop `to` gets `to` back with the schema |
-| Interactive canvas: render, drag, wheel zoom, pan, Fit, Tidy, Source, identical re-render keeps a dragged layout, hostile labels, window resize | ✅ Headless Chrome driving the real page with real mouse events |
+| Growing map rules: boxes only added, duplicates reused, bad arrows dropped, full topic continues in a new group, resume validation | ✅ 22 unit checks on `backend/services/topics.py` |
+| Live loop sends only speech the map doesn't cover yet; map grows across updates; resume after reconnect | ✅ WebSocket integration test with a fake Scribe and fake Gemini |
+| Simple-English prompt on a real lecture (elephant talk, 6 pieces) | ✅ Live Gemini: arrows read as simple sentences ("Mud bath protects Wrinkled skin"), topics split by subject; the occasional odd arrow remains |
+| Lecture map canvas: topic groups side by side, finished topics never move, scroll = move / pinch = zoom around the pointer, zoom buttons, follow mode, Tidy, Source, glow, quiz (answers, highlight, no ambiguous options), resume on reconnect | ✅ 45 checks in headless Chrome driving the real page with real mouse events |
 | REST API + SQLite persistence | ✅ Live |
 | Automated tests in the repo | ❌ None yet — the checks above ran from throwaway scripts |
 
@@ -46,7 +57,6 @@ GEMINI_MODEL=gemini-3.5-flash-lite
 ELEVENLABS_API_KEY=
 
 EXTRACTION_INTERVAL_SECONDS=20
-BUFFER_WINDOW_SECONDS=60
 MIN_EXTRACTION_GAP_SECONDS=8
 BOOST_VOCAB=backpropagation,recursion,gradient descent,neural network,base case
 
@@ -54,12 +64,12 @@ DATABASE_URL=sqlite+aiosqlite:///./lecture.db
 ```
 - `GEMINI_MODEL` — single place to change if the model gets sunset again; a
   model-not-found error now names this exact variable in the error message.
-- `BUFFER_WINDOW_SECONDS` — the transcript buffer is a sliding window:
-  extraction runs over the last N seconds of live speech, not the whole
-  lecture (so it isn't cleared after every extraction — an explanation that
-  crosses a timer boundary still gets extracted as one coherent piece). Text
-  sent as a `manual_text` WebSocket message (no UI for it currently) is not
-  windowed.
+- `EXTRACTION_INTERVAL_SECONDS` — how often the map grows. Each update sends
+  Gemini the current topic, the tail of what the map already covers, and only
+  the speech since the last update. Text sent as a `manual_text` WebSocket
+  message (no UI for it currently) counts as new speech once.
+- Topic size: a new group starts after 10 boxes or 5 minutes
+  (`MAX_NODES_PER_TOPIC`, `MAX_TOPIC_SECONDS` in `backend/services/topics.py`).
 - `MIN_EXTRACTION_GAP_SECONDS` — hard floor between Gemini calls, enforced
   server-side. Protects the API quota even if the ⚡ button is spammed faster
   than its own client-side cooldown; a ⚡ press inside the gap waits it out
@@ -80,14 +90,15 @@ uvicorn backend.main:app --port 8010
 - `GET /api/sessions` → list sessions, newest first
 - `GET /api/sessions/{id}` → session + its diagrams + its transcript chunks
 - `GET /api/diagrams/{id}` / `DELETE /api/diagrams/{id}`
-- `POST /api/process` `{text}` (20,000 char cap) → runs one Gemini extraction
-  immediately, persists it under its own session, returns the diagram. Useful
-  for testing the pipeline without the live WS/mic flow.
+- `POST /api/process` `{text}` (20,000 char cap) → builds a lecture map from
+  the text in one Gemini call, persists it under its own session, returns it
+  (`diagram.graph` is `{"topics": [...]}`). Useful for testing the pipeline
+  without the live WS/mic flow.
 
-Every diagram stored (live or via `/api/process`) carries its `source_text` —
-the exact excerpt that was sent to Gemini to produce it. The frontend's
-**📄 Source** button reads this straight off the live WS message; the REST API
-is the same data for anything already persisted.
+Every diagram row is a snapshot of the whole map after one update
+(`{"topics": [...]}`), with its `source_text` — the new speech that update was
+built from. The frontend's **📄 Source** button reads this straight off the
+live WS message; the REST API is the same data for anything already persisted.
 
 ## Known issues / things to know
 - **Corporate/Avast SSL interception**: this machine's Avast antivirus MITMs
@@ -99,14 +110,15 @@ is the same data for anything already persisted.
 - **Scribe not connecting?** Read the `stt_status` error detail first — it's
   the raw error text from ElevenLabs, which will usually say exactly what's
   wrong (auth, bad query param, unsupported audio format, etc).
-- **20s extraction interval, 60s sliding window, 8s hard floor**: conservative
-  guesses, not measured limits. Adjust in `.env` if it feels sluggish or
+- **20s extraction interval, 8s hard floor**: conservative guesses, not
+  measured limits. Adjust in `.env` if it feels sluggish or
   you're burning quota too fast.
 - Gemini model used: `gemini-3.5-flash-lite` (configurable — see Config).
   Its free tier allows 15 requests/minute; the app uses about 3/minute. The
-  system prompt asks for 4–10 nodes and ~6-word labels, diagrams any
-  explanation (even informal cause and effect), and returns an empty graph
-  only for greetings, logistics and small talk.
+  system prompt asks for simple everyday words (boxes = things, arrows = short
+  verbs), every "box → arrow → box" to read as a true simple sentence, emoji
+  only on concrete things, and nothing for greetings, logistics and small
+  talk.
 - No auth of any kind — anyone who can reach the server can read/delete any
   session or diagram via the REST API. Fine for local/single-user use; would
   need addressing before deploying this anywhere multi-user or public.
@@ -117,22 +129,25 @@ is the same data for anything already persisted.
 ```
 frontend/index.html    Browser: mic capture (getUserMedia -> downsample to
                         16kHz PCM16 -> binary WS frames) -> WebSocket ->
-                        draws the flowchart on a Cytoscape.js canvas with a
-                        dagre layout (drag/zoom/pan, Fit, Tidy, Source view;
-                        skips identical re-renders), shows live transcript,
-                        recording timer and next-diagram countdown
+                        draws the lecture map on a Cytoscape.js canvas (topic
+                        groups, dagre layout, only new boxes added; scroll to
+                        move, pinch to zoom, Fit/Tidy/Source), quiz panel,
+                        live transcript, recording timer, next-update
+                        countdown; sends the map back on reconnect
 backend/main.py         FastAPI + WebSocket: relays audio to Scribe, keeps a
-                        sliding-window transcript buffer, runs Gemini
-                        extraction on a timer (or on-demand via force),
-                        persists transcript chunks + diagrams as they happen
+                        tracks which speech the map already covers, grows
+                        the map on a timer (or on-demand via force), persists
+                        transcript chunks + map snapshots as they happen
 backend/api.py          REST: sessions/diagrams CRUD-ish + POST /api/process
 backend/db.py           SQLModel tables (sessions, diagrams, transcript_chunks)
                         + async SQLite engine/session helpers
 backend/services/
   transcribe.py          ElevenLabs Scribe v2 Realtime WS relay client
-  diagram.py              Async Gemini call -> Pydantic-validated
-                           {nodes, edges} JSON (GeminiParseError on anything
-                           that doesn't fit the strict schema)
+  diagram.py              Async Gemini call: map so far + new speech ->
+                           schema-enforced "what to add" JSON
+                           (GeminiParseError on anything that doesn't fit)
+  topics.py               The lecture map: merges Gemini's additions (topics,
+                           box ids, duplicates, topic size limits), no I/O
 ```
 
 ## Roadmap (not built yet)
