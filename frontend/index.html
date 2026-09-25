@@ -11,27 +11,32 @@
   /* ---- design tokens: every colour on the page (and on the canvas) comes from here ---- */
   :root {
     color-scheme: dark;
-    --bg: #07070c;
-    --surface: rgba(255, 255, 255, 0.04); /* glass cards and panels */
-    --surface-2: rgba(255, 255, 255, 0.08); /* hover backgrounds */
-    --border: rgba(255, 255, 255, 0.10);
-    --text: #f2f3f7;
-    --muted: #9496a8;
+    --bg: #0e1022; /* deep indigo navy */
+    --surface: rgba(139, 128, 255, 0.06); /* violet-tinted glass cards and panels */
+    --surface-2: rgba(139, 128, 255, 0.12); /* hover backgrounds */
+    --border: rgba(167, 139, 250, 0.16);
+    --text: #eeecfa;
+    --muted: #a09ec4; /* lavender grey */
     --accent-1: #7c5cff; /* electric violet */
     --accent-2: #00d4ff; /* neon blue: links and active states */
+    --accent-soft: #a78bfa; /* lavender violet: outlined buttons and icons */
     --gradient: linear-gradient(135deg, var(--accent-1), var(--accent-2));
     --glow: 0 0 24px rgba(124, 92, 255, 0.35);
 
+    --glow-rest: 0 0 14px rgba(124, 92, 255, 0.18); /* outlined buttons at rest */
     --glow-soft: 0 0 10px rgba(124, 92, 255, 0.2); /* pressed buttons */
+    --btn-border: rgba(139, 114, 246, 0.85);
+    --btn-fill: rgba(124, 92, 255, 0.06);
     --on-primary: #ffffff;
-    --on-accent: #07070c; /* text on solid --accent-2 */
+    --on-accent: #0e1022; /* text on solid --accent-2 */
     --accent-2-faint: rgba(0, 212, 255, 0.12); /* active and tag backgrounds */
     /* Darkens the gradient under white text, more toward the blue end: white on
-       the raw gradient is only 1.8:1-4.4:1 (below WCAG AA); with this, at least 5.1:1. */
-    --primary-scrim: linear-gradient(135deg, rgba(7, 7, 12, 0.1), rgba(7, 7, 12, 0.5));
+       the raw gradient is only 1.8:1-4.4:1 (below WCAG AA); with this, at least 5.0:1. */
+    --primary-scrim: linear-gradient(135deg, rgba(14, 16, 34, 0.1), rgba(14, 16, 34, 0.5));
     --shine: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.28), transparent);
-    --ambient: radial-gradient(900px 520px at 8% -8%, rgba(124, 92, 255, 0.12), transparent 70%),
-               radial-gradient(760px 480px at 100% 0%, rgba(0, 212, 255, 0.07), transparent 70%);
+    --ambient: radial-gradient(1100px 700px at 0% 0%, rgba(88, 80, 196, 0.26), transparent 60%),
+               radial-gradient(900px 600px at 100% 100%, rgba(40, 50, 130, 0.22), transparent 60%);
+    --page-dots: rgba(167, 139, 250, 0.09);
     --danger: #ff5c7a;
     --danger-faint: rgba(255, 92, 122, 0.12);
     --danger-border: rgba(255, 92, 122, 0.35);
@@ -39,18 +44,19 @@
     --danger-pulse-end: rgba(255, 92, 122, 0);
     --success: #34d399;
     --success-faint: rgba(52, 211, 153, 0.14);
-    --input-bg: rgba(0, 0, 0, 0.3);
+    --input-bg: rgba(8, 9, 24, 0.5);
     --wave-active: var(--accent-2);
-    --wave-idle: rgba(255, 255, 255, 0.14);
+    --wave-idle: rgba(167, 139, 250, 0.22);
 
     /* lecture map canvas. Cytoscape needs solid colours, so these are the
        palette pre-blended onto the canvas background. */
-    --canvas-bg: rgba(0, 0, 0, 0.35);
-    --grid-dot: rgba(255, 255, 255, 0.07);
-    --topic-bg: #12101c; /* --accent-1 at 6% over the canvas */
-    --topic-border: #2d2356; /* --accent-1 at 30% over the canvas */
+    --canvas-bg: #0d0e21;
+    --canvas-glow: radial-gradient(800px 460px at 0% 0%, rgba(124, 92, 255, 0.13), transparent 70%);
+    --grid-dot: rgba(167, 139, 250, 0.11);
+    --topic-bg: #161433; /* --accent-1 at 8% over the canvas */
+    --topic-border: #34296f; /* --accent-1 at 35% over the canvas */
     --topic-title: var(--text);
-    --node-bg: #1f1937; /* --accent-1 at 12% over --topic-bg */
+    --node-bg: #241e4f; /* --accent-1 at 14% over --topic-bg */
     --node-border: var(--accent-1);
     --node-text: var(--text);
     --edge: var(--muted);
@@ -63,6 +69,14 @@
     margin: 0; padding: 1.5rem 2rem 2.5rem;
     background: var(--ambient), var(--bg); background-attachment: fixed; color: var(--text);
     font-size: 17px;
+  }
+  /* faint dot texture over the page, strongest top-left where the light is */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background-image: radial-gradient(circle, var(--page-dots) 1px, transparent 1.3px);
+    background-size: 26px 26px;
+    -webkit-mask-image: radial-gradient(1100px 650px at 0% 0%, #000, transparent 75%);
+    mask-image: radial-gradient(1100px 650px at 0% 0%, #000, transparent 75%);
   }
   h1 {
     margin: 0 0 0.15rem; font-size: 1.7rem; letter-spacing: -0.02em;
@@ -89,22 +103,16 @@
     flex: none; min-width: 3.4rem; text-align: center;
   }
 
-  /* ---- buttons. Default is secondary: transparent with a 1px gradient border.
-     .mic-btn and #quizNext are primary; .ring-btn and the zoom buttons are borderless. ---- */
+  /* ---- buttons. Default is secondary: outlined in violet with violet text and a
+     soft glow. .mic-btn, #quizNext and #generateFromTextBtn are primary; .ring-btn
+     and the zoom buttons are borderless. ---- */
   button {
     position: relative; overflow: hidden;
     font-size: 0.95rem; font-weight: 600; padding: 0.6rem 1.15rem; border-radius: 9px;
-    border: 1px solid transparent; cursor: pointer; background: transparent; background-clip: padding-box;
-    color: var(--text);
+    border: 1px solid var(--btn-border); cursor: pointer; background: var(--btn-fill); background-clip: padding-box;
+    color: var(--accent-soft); box-shadow: var(--glow-rest);
     transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease,
                 border-color 180ms ease, color 180ms ease, opacity 180ms ease;
-  }
-  /* the gradient border: a masked pseudo-element, so the button itself stays transparent */
-  button::before {
-    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
-    background: var(--gradient); pointer-events: none;
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor; mask-composite: exclude;
   }
   /* the reflection: a thin diagonal shine that sweeps across once on hover */
   button::after {
@@ -112,25 +120,29 @@
     background: var(--shine); transform: translateX(-160%) skewX(-20deg); pointer-events: none;
   }
   @keyframes shine { to { transform: translateX(420%) skewX(-20deg); } }
-  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: var(--glow); background-color: var(--surface-2); }
+  button:hover:not(:disabled) {
+    transform: translateY(-2px); box-shadow: var(--glow); background-color: var(--surface-2);
+    color: var(--text); border-color: var(--accent-soft);
+  }
   button:hover:not(:disabled)::after { animation: shine 600ms ease; }
   button:active:not(:disabled) { transform: translateY(0); box-shadow: var(--glow-soft); }
   button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
   /* primary */
   .mic-btn, #quizNext, #generateFromTextBtn {
     background: var(--primary-scrim), var(--gradient); color: var(--on-primary); border-color: transparent;
   }
-  .mic-btn::before, #quizNext::before, #generateFromTextBtn::before { content: none; }
+  .mic-btn:hover:not(:disabled), #quizNext:hover:not(:disabled), #generateFromTextBtn:hover:not(:disabled) {
+    color: var(--on-primary); border-color: transparent;
+  }
 
   /* ---- generate-now button + countdown ring (SVG stroke-dasharray technique) ---- */
   .ring-btn {
     position: relative; flex: none; width: 44px; height: 44px; padding: 0;
-    border-radius: 50%; border: none; background: transparent; cursor: pointer;
+    border-radius: 50%; border: none; background: transparent; box-shadow: none; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
-  .ring-btn::before { content: none; } /* the ring is its border */
   .ring-btn:disabled { cursor: not-allowed; opacity: 0.5; }
   .ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
   .ring-track { fill: none; stroke: var(--border); stroke-width: 3; }
@@ -151,9 +163,11 @@
     width: 26px; height: 26px; padding: 0; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-size: 0.85rem; background: var(--danger-faint); color: var(--danger); border: 1px solid var(--danger);
+    box-shadow: none;
   }
-  .warn-btn::before { content: none; }
-  .warn-btn:hover:not(:disabled) { transform: translateY(calc(-50% - 2px)); background-color: var(--danger-faint); }
+  .warn-btn:hover:not(:disabled) {
+    transform: translateY(calc(-50% - 2px)); background-color: var(--danger-faint); color: var(--danger); border-color: var(--danger);
+  }
   .warn-btn:active:not(:disabled) { transform: translateY(-50%); }
   .error-line {
     display: none; font-size: 0.8rem; color: var(--danger); background: var(--danger-faint);
@@ -176,14 +190,17 @@
   .mic-btn.recording:hover:not(:disabled) { background-color: var(--danger); }
 
   .card { border: 1px solid var(--border); border-radius: 14px; padding: 1.2rem; margin-bottom: 1.2rem; }
-  .card h2 { margin: 0 0 0.7rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .card h2 { margin: 0 0 0.7rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); }
+  .card h2::before, .quiz-head h3::before {
+    content: ""; display: inline-block; width: 26px; height: 1px; margin-right: 12px;
+    vertical-align: middle; background: currentColor; opacity: 0.7;
+  }
 
   .card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin-bottom: 0.7rem; }
   .card-head h2 { margin: 0; }
   .diagram-tools { display: flex; gap: 0.4rem; }
   .diagram-tools button { padding: 0.3rem 0.7rem; font-size: 0.78rem; border-radius: 7px; }
-  .diagram-tools button.active { background-color: var(--accent-2-faint); color: var(--accent-2); }
-  .diagram-tools button.active::before { background: var(--accent-2); }
+  .diagram-tools button.active { background-color: var(--accent-2-faint); color: var(--accent-2); border-color: var(--accent-2); }
 
   /* Map on the left, quiz on the right; stacked on narrow screens. */
   .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: stretch; }
@@ -192,9 +209,13 @@
   /* Cytoscape needs a container with a real size, so the canvas area has a fixed height. */
   #chartWrap {
     position: relative; height: min(70vh, 680px); min-height: 360px;
-    border-radius: 10px; overflow: hidden; background: var(--canvas-bg);
+    border-radius: 10px; overflow: hidden; background-color: var(--canvas-bg);
+    background-image: radial-gradient(circle, var(--grid-dot) 1.2px, transparent 1.4px), var(--canvas-glow);
+    background-size: 24px 24px, 100% 100%; background-repeat: repeat, no-repeat;
     box-shadow: inset 0 0 0 1px var(--border);
   }
+  /* once a map is up, the dots come from #cy, which moves them with pan and zoom */
+  #chartWrap.has-map { background-image: var(--canvas-glow); background-size: 100% 100%; background-repeat: no-repeat; }
   #chartWrap.flash { animation: flash 0.6s ease; }
   @keyframes flash { 0% { box-shadow: inset 0 0 0 2px var(--accent-2); } 100% { box-shadow: inset 0 0 0 1px var(--border); } }
   /* Dot grid; its size and offset follow the canvas zoom and pan (see updateGrid). */
@@ -218,9 +239,8 @@
   }
   .zoom-controls button {
     width: 32px; height: 32px; padding: 0; border: none; border-radius: 7px; background: transparent;
-    font-size: 1rem; line-height: 1;
+    color: var(--muted); box-shadow: none; font-size: 1rem; line-height: 1;
   }
-  .zoom-controls button::before { content: none; }
   #zoomLabel { min-width: 3.2rem; text-align: center; font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   #diagramHint { color: var(--muted); font-size: 0.72rem; text-align: center; margin: 0.6rem 0 0; }
 
@@ -230,7 +250,7 @@
     display: flex; flex-direction: column; gap: 0.8rem; min-height: 0;
   }
   .quiz-head { display: flex; justify-content: space-between; align-items: baseline; }
-  .quiz-head h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .quiz-head h3 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); }
   #quizScore { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
   #quizBody { display: flex; flex-direction: column; gap: 0.8rem; }
   .quiz-empty { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
@@ -240,11 +260,9 @@
     color: var(--highlight); text-align: center; font-weight: 700;
   }
   .quiz-options { display: flex; flex-direction: column; gap: 0.45rem; }
-  .quiz-options button { text-align: left; font-weight: 500; }
-  .quiz-options button.right { background-color: var(--success-faint); }
-  .quiz-options button.right::before { background: var(--success); }
-  .quiz-options button.wrong { background-color: var(--danger-faint); }
-  .quiz-options button.wrong::before { background: var(--danger); }
+  .quiz-options button { text-align: left; font-weight: 500; color: var(--text); }
+  .quiz-options button.right { background-color: var(--success-faint); border-color: var(--success); }
+  .quiz-options button.wrong { background-color: var(--danger-faint); border-color: var(--danger); }
   .quiz-options button:disabled { opacity: 1; } /* answered: keep the right/wrong marks readable */
   .quiz-feedback { margin: 0; font-size: 0.9rem; line-height: 1.5; }
   #quizNext { align-self: flex-start; }
@@ -268,7 +286,7 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 0.95rem; line-height: 1;
   }
-  #editTranscriptBtn.active { background-color: var(--accent-2); color: var(--on-accent); }
+  #editTranscriptBtn.active { background-color: var(--accent-2); color: var(--on-accent); border-color: var(--accent-2); }
   /* ⚡ in the edit box: save the text and build the map from it right away */
   #generateFromTextBtn {
     position: absolute; right: calc(0.9rem + 2rem + 0.5rem); bottom: 0.9rem;
@@ -276,7 +294,6 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 0.95rem; line-height: 1;
   }
-  #editTranscriptBtn.active::before { background: var(--accent-2); }
 
   /* Reduced motion: no lift and no shine sweep; colours still change. */
   @media (prefers-reduced-motion: reduce) {
@@ -1034,6 +1051,7 @@ function renderMap(topics, newIds, sourceText) {
   if (showingSource) sourceView.textContent = lastSourceText; // keep an open source view fresh
 
   placeholderEl.style.display = "none";
+  chartWrap.classList.add("has-map");
   diagramTools.style.display = "";
   zoomControls.style.display = showingSource ? "none" : "";
   diagramHint.style.display = showingSource ? "none" : "";
