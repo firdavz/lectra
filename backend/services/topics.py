@@ -4,9 +4,13 @@ redrawn or dropped. Pure data logic, no I/O, so the merge rules can be tested
 without Gemini or a WebSocket.
 
 A topic is a plain dict, the same shape that goes to the browser:
-    {"id": "t1", "title": "Baby is born",
+    {"id": "t1", "title": "Baby is born", "kind": "timeline",
      "nodes": [{"id": "t1n1", "label": "Baby elephant", "emoji": "🐘"}],
      "edges": [{"from": "t1n1", "to": "t1n2", "label": "falls to"}]}
+
+"kind" is how the topic is drawn: a "process" flows top to bottom, a
+"timeline" left to right, a "concept" around its main idea, and a
+"comparison" puts the compared things above their features.
 """
 import re
 from typing import Optional
@@ -16,6 +20,12 @@ from pydantic import BaseModel, Field, field_validator
 MAX_NODES_PER_TOPIC = 10
 MAX_TOPIC_SECONDS = 5 * 60  # a topic running longer than this is continued in a new group
 MAX_LABEL_CHARS = 60
+KINDS = ("process", "timeline", "concept", "comparison")
+
+
+def _kind(v) -> str:
+    v = str(v or "").strip().lower()
+    return v if v in KINDS else "process"
 
 
 class MapNode(BaseModel):
@@ -51,14 +61,20 @@ class MapUpdate(BaseModel):
     """One Gemini answer: boxes for the current topic, and optionally a new topic."""
     add: MapGraph = MapGraph()
     new_topic_title: str = ""
+    new_topic_kind: str = "process"
     new_topic: MapGraph = MapGraph()
+
+    _norm_kind = field_validator("new_topic_kind", mode="before")(classmethod(lambda cls, v: _kind(v)))
 
 
 class Topic(BaseModel):
     id: str
     title: str
+    kind: str = "process"
     nodes: list[MapNode] = Field(default=[], max_length=100)
     edges: list[MapEdge] = Field(default=[], max_length=200)
+
+    _norm_kind = field_validator("kind", mode="before")(classmethod(lambda cls, v: _kind(v)))
 
 
 def is_full(topic: dict, age_seconds: float) -> bool:
@@ -82,9 +98,12 @@ def apply_update(topics: list[dict], update: MapUpdate, current_full: bool = Fal
         leftover = update.add
 
     if update.new_topic.nodes or leftover:
+        continuation = bool(leftover and current and not update.new_topic.nodes)
         if not title:
             title = _continued(current["title"]) if leftover and current else f"Topic {len(topics) + 1}"
-        topic = {"id": f"t{len(topics) + 1}", "title": title, "nodes": [], "edges": []}
+        # A full topic continued in a new group keeps its kind.
+        kind = current.get("kind", "process") if continuation else update.new_topic_kind
+        topic = {"id": f"t{len(topics) + 1}", "title": title, "kind": kind, "nodes": [], "edges": []}
         topics.append(topic)
         if leftover:
             added += _merge(topic, leftover)

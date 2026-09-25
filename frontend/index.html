@@ -845,7 +845,15 @@ const WHEEL_ZOOM_SPEED = 0.003; // pinch / Ctrl + wheel
 const GRID_SIZE = 24;
 const MOVE_MS = 350;
 const FRESH_MS = 4000; // how long new boxes glow
-const LAYOUT = { name: "dagre", rankDir: "TB", nodeSep: 40, rankSep: 55 };
+// How each kind of topic is drawn (the kind comes from Gemini, see
+// backend/services/topics.py); the icon shows in the topic's title.
+const KINDS = {
+  process: { icon: "⚙️", layout: { name: "dagre", rankDir: "TB", nodeSep: 40, rankSep: 55 } },
+  timeline: { icon: "⏳", layout: { name: "dagre", rankDir: "LR", nodeSep: 30, rankSep: 55 } },
+  comparison: { icon: "⚖️", layout: { name: "dagre", rankDir: "TB", nodeSep: 30, rankSep: 70 } },
+  concept: { icon: "💡", layout: null }, // radial, see layoutConcept()
+};
+const kindOf = (topic) => (topic && KINDS[topic.kind] ? topic.kind : "process");
 // A transparent 1px image for topic groups. Without any background image,
 // Cytoscape (3.31-3.34) flips a group's :backgrounding state on every draw and
 // restyles the group and all its boxes each frame, which froze the canvas
@@ -1010,15 +1018,55 @@ function fitView(animate) {
   setViewport({ zoom, pan: { x: (w - zoom * (bb.x1 + bb.x2)) / 2, y: (h - zoom * (bb.y1 + bb.y2)) / 2 } }, animate);
 }
 
-// Lay out the given topics' boxes (dagre, top to bottom) and put each group
+// A concept map as a radial tree: the most connected box in the middle, its
+// branches on a ring around it, their branches on the next ring out -- each in
+// the same direction as its parent, so arrows stay short and don't cross.
+function layoutConcept(kids) {
+  const center = kids.max((n) => n.degree(false)).ele;
+  const children = new Map([[center.id(), []]]);
+  const depth = new Map([[center.id(), 0]]);
+  kids.union(kids.connectedEdges()).bfs({
+    roots: center,
+    directed: false,
+    visit: (v, e, u, i, d) => {
+      if (u) children.get(u.id()).push(v);
+      if (!children.has(v.id())) children.set(v.id(), []);
+      depth.set(v.id(), d);
+    },
+  });
+  kids.forEach((n) => { // boxes with no arrow to the rest: extra branches of the middle
+    if (depth.has(n.id())) return;
+    children.get(center.id()).push(n);
+    children.set(n.id(), []);
+    depth.set(n.id(), 1);
+  });
+  const leaves = (n) => children.get(n.id()).reduce((sum, c) => sum + leaves(c), 0) || 1;
+  const ring = Math.max(170, (leaves(center) * 90) / (2 * Math.PI)); // room for every outer box
+  // Each box gets a slice of the circle in proportion to how many outer boxes hang off it.
+  const place = (n, from, to) => {
+    const d = depth.get(n.id()), angle = (from + to) / 2;
+    n.position({ x: Math.cos(angle) * ring * d, y: Math.sin(angle) * ring * d });
+    let start = from;
+    for (const c of children.get(n.id())) {
+      const span = ((to - from) * leaves(c)) / leaves(n);
+      place(c, start, start + span);
+      start += span;
+    }
+  };
+  place(center, -Math.PI / 2, (3 * Math.PI) / 2);
+}
+
+// Lay out the given topics' boxes in their kind's shape and put each group
 // just right of the one before it; other topics don't move. `starts` (box id ->
 // position) makes boxes glide there from where they were instead of jumping.
 function layoutTopics(topicIds, starts) {
   for (const id of topicIds) {
     const kids = cy.getElementById(id).children();
     if (kids.empty()) continue;
-    kids.union(kids.connectedEdges()).layout({ ...LAYOUT, fit: false, animate: false }).run();
     const i = mapTopics.findIndex((t) => t.id === id);
+    const kind = kindOf(mapTopics[i]);
+    if (kind === "concept") layoutConcept(kids);
+    else kids.union(kids.connectedEdges()).layout({ ...KINDS[kind].layout, fit: false, animate: false }).run();
     const prev = i > 0 ? cy.getElementById(mapTopics[i - 1].id) : null;
     const left = prev && prev.nonempty() ? prev.boundingBox({ includeLabels: true }).x2 + TOPIC_GAP : 0;
     const top = prev && prev.nonempty() ? prev.children().boundingBox().y1 : 0; // groups share a top line
@@ -1085,7 +1133,7 @@ function renderMap(topics, newIds, sourceText) {
   const added = [];
   cy.batch(() => {
     topics.forEach((t, i) => {
-      const title = `${i + 1}. ${t.title}`;
+      const title = `${KINDS[kindOf(t)].icon} ${i + 1}. ${t.title}`;
       const group = cy.getElementById(t.id);
       if (group.empty()) {
         cy.add({ group: "nodes", data: { id: t.id, label: title }, classes: "topic", selectable: false });

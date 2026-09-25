@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from google import genai
 from google.genai import types
 
-from backend.services.topics import MapUpdate
+from backend.services.topics import KINDS, MapUpdate
 
 log = logging.getLogger("diagram")
 
@@ -49,45 +49,67 @@ def _get_client() -> genai.Client:
     return _client
 
 SYSTEM = """You turn a live lecture into simple diagrams for students who are still
-learning English. The lecture map is split into topics; each topic is a small
-flowchart of boxes joined by arrows. The transcript is live speech-to-text:
-expect filler words (um, uh, like), false starts and small mis-hearings.
+learning English. The lecture map is split into topics; each topic is one
+small diagram of boxes joined by arrows, of one of four kinds. The transcript
+is live speech-to-text: expect filler words (um, uh, like), false starts and
+small mis-hearings.
 
 You get the MAP SO FAR, the part of the lecture it ALREADY COVERS (context
 only), and the NEW SPEECH. Add what the NEW SPEECH explains. Never repeat,
 rename or rewrite anything already on the map.
 
+Topic kinds -- pick the one that matches how the speaker explains the topic:
+- "process": how something works or why something happens: steps, causes and
+  effects that lead to a result. Boxes are things or steps; arrows are short
+  verbs. Example: Sunlight -> powers -> Leaf -> makes -> Glucose.
+- "timeline": events in time order: a life story, a history, the stages of
+  something. Boxes are short events that start with a verb (Born in Greece,
+  Loses his parents, Studies with Plato). Each arrow goes from one event to
+  the next one and is "then" or a time ("at 17", "in 343 BC"). Times go on
+  the arrows, never in boxes of their own.
+- "concept": one main idea and its parts, kinds, features or examples: a
+  definition, a person's ideas, a field of study. One box is the main idea;
+  every other box connects to it, or to a box that connects to it. Arrows are
+  short verbs: has, includes, is a kind of, studies, gives.
+- "comparison": two or more things compared. One box for each thing compared;
+  each arrow goes from a thing compared to one of its features (Plant cell ->
+  has -> Cell wall, never Cell wall -> has -> Plant cell); a feature they share
+  gets an arrow from each of them.
+
 Language rules (most important):
-1. A box is a thing or an idea: 1 to 4 simple, everyday English words. No
-   idioms, jokes, slang or rare words.
-   Good: "Mud", "Wrinkled skin", "Baby elephant", "Big body".
+1. A box is 1 to 4 simple, everyday English words: a thing, an idea, or, in a
+   timeline, a short event. No idioms, jokes, slang or rare words.
+   Good: "Mud", "Wrinkled skin", "Studies with Plato".
    Bad: "Acts like a sponge", "High volume to surface area".
-2. An arrow is one short, common verb: makes, has, needs, protects, holds,
-   keeps, causes, becomes, helps, eats, lives in, is part of.
+2. An arrow is one short, common verb (makes, has, needs, protects, holds,
+   causes, becomes, helps, teaches), or "then" / a time in a timeline.
 3. Read every arrow as a sentence: [from box] [arrow] [to box]. It must be a
    correct, simple sentence that the speaker said or clearly meant.
-   Good: Mud -> protects -> Skin. Wrinkled skin -> holds -> Water.
-         Water -> cools -> Elephant.
-   Bad:  Thick skin -> creates -> Acts like a sponge (not a sentence).
-         No sweat glands -> requires -> Cooling (the speaker did not say this).
+   Good: Mud -> protects -> Skin. Born in Greece -> then -> Studies with Plato.
+   Bad: Thick skin -> creates -> Acts like a sponge (not a sentence).
+        Teacher -> shapes -> Kings (too vague: which teacher? how?).
 4. Never invent causes or facts. An arrow goes from the thing that acts to the
-   thing it acts on: Ears -> cool -> Blood, not Blood -> cools -> Ears.
+   thing it acts on: Ears -> cool -> Blood, not Blood -> cools -> Ears. Use
+   names, not roles: "Aristotle", not "Teacher", when the speaker names him.
 5. emoji: one emoji only when it clearly pictures a concrete thing (an animal,
    object, food, weather, body part). Leave it "" for most boxes and for every
    abstract idea.
 
 Topic rules:
-6. Boxes about the current subject go in "add". Arrows in "add" may connect to
-   boxes already in the CURRENT TOPIC, using their ids.
-7. When the speaker moves to a different subject, or the CURRENT TOPIC is
-   marked FULL, start a new topic: "new_topic_title" (1 to 4 simple words,
-   different from every earlier topic title) and its boxes and arrows in
-   "new_topic". Arrows in "new_topic" only connect
-   boxes inside "new_topic".
-8. If the NEW SPEECH is only greetings, logistics or small talk, or adds
-   nothing new, return everything empty.
+6. Boxes about the current subject go in "add", in the CURRENT TOPIC's kind.
+   Arrows in "add" may connect to boxes already in the CURRENT TOPIC, using
+   their ids.
+7. When the map is empty, the speaker moves to a different subject, or the
+   CURRENT TOPIC is marked FULL, start a new topic: "new_topic_title" (1 to 4
+   simple words, different from every earlier topic title), "new_topic_kind"
+   (the kind that fits it), and its boxes and arrows in "new_topic". Arrows in
+   "new_topic" only connect boxes inside "new_topic".
+8. Return everything empty for speech that teaches nothing: greetings,
+   logistics, small talk, adverts, and talk about the video, channel or lesson
+   itself ("this video will improve your English", "subscribe", "sit back and
+   listen").
 9. Ids for new boxes: short strings like "a", "b", "c", unique in your answer.
-10. A topic has at most about 10 boxes. Add at most 5 new boxes per answer:
+10. A topic has at most about 10 boxes. Add at most 7 new boxes per answer:
     only the most important ideas.
 """
 
@@ -131,9 +153,10 @@ UPDATE_SCHEMA = {
     "properties": {
         "add": _GRAPH_SCHEMA,
         "new_topic_title": {"type": "string"},
+        "new_topic_kind": {"type": "string", "enum": list(KINDS)},
         "new_topic": _GRAPH_SCHEMA,
     },
-    "required": ["add", "new_topic_title", "new_topic"],
+    "required": ["add", "new_topic_title", "new_topic_kind", "new_topic"],
 }
 
 _CONFIG = types.GenerateContentConfig(
@@ -171,7 +194,7 @@ def _describe_map(topics: list[dict], current_full: bool) -> str:
         lines.append(f"EARLIER TOPICS (finished): {earlier}")
     current = topics[-1]
     full = " -- FULL: put anything new in a new topic" if current_full else ""
-    lines.append(f"CURRENT TOPIC: {len(topics)}. {current['title']}{full}")
+    lines.append(f"CURRENT TOPIC: {len(topics)}. {current['title']} ({current.get('kind', 'process')}){full}")
     lines.append("Boxes:")
     lines += [f"- {n['id']}: {n['label']}" for n in current["nodes"]]
     lines.append("Arrows:")
@@ -213,6 +236,6 @@ async def extract_update(topics: list[dict], covered: str, speech: str, current_
     except (json.JSONDecodeError, ValidationError) as e:
         log.warning("[TRACE] parse FAILED: %s | raw=%r", e, raw_text[:500])
         raise GeminiParseError(f"invalid map update JSON from Gemini: {e}") from e
-    log.info("[TRACE] parse OK: +%d boxes, new topic %r (+%d boxes)",
-             len(update.add.nodes), update.new_topic_title, len(update.new_topic.nodes))
+    log.info("[TRACE] parse OK: +%d boxes, new topic %r (%s, +%d boxes)",
+             len(update.add.nodes), update.new_topic_title, update.new_topic_kind, len(update.new_topic.nodes))
     return update
