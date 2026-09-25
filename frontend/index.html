@@ -119,10 +119,10 @@
   button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* primary */
-  .mic-btn, #quizNext {
+  .mic-btn, #quizNext, #generateFromTextBtn {
     background: var(--primary-scrim), var(--gradient); color: var(--on-primary); border-color: transparent;
   }
-  .mic-btn::before, #quizNext::before { content: none; }
+  .mic-btn::before, #quizNext::before, #generateFromTextBtn::before { content: none; }
 
   /* ---- generate-now button + countdown ring (SVG stroke-dasharray technique) ---- */
   .ring-btn {
@@ -269,6 +269,13 @@
     font-size: 0.95rem; line-height: 1;
   }
   #editTranscriptBtn.active { background-color: var(--accent-2); color: var(--on-accent); }
+  /* ⚡ in the edit box: save the text and build the map from it right away */
+  #generateFromTextBtn {
+    position: absolute; right: calc(0.9rem + 2rem + 0.5rem); bottom: 0.9rem;
+    width: 2rem; height: 2rem; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.95rem; line-height: 1;
+  }
   #editTranscriptBtn.active::before { background: var(--accent-2); }
 
   /* Reduced motion: no lift and no shine sweep; colours still change. */
@@ -306,8 +313,9 @@
   <div class="card transcript-card">
     <h2>Live transcript</h2>
     <div id="transcript"></div>
-    <textarea id="transcriptEdit" spellcheck="false"></textarea>
-    <button id="editTranscriptBtn" type="button" title="Edit transcript" aria-label="Edit transcript">✎</button>
+    <textarea id="transcriptEdit" spellcheck="false" placeholder="Type or paste a transcript, then press ⚡ to build the map (✓ only saves)"></textarea>
+    <button id="generateFromTextBtn" type="button" title="Build the map from this text" aria-label="Build the map from this text" style="display:none">⚡</button>
+    <button id="editTranscriptBtn" type="button" title="Edit or paste the transcript" aria-label="Edit or paste the transcript">✎</button>
   </div>
 
   <div class="card">
@@ -350,6 +358,7 @@ const micBtn = document.getElementById("micBtn");
 const transcriptEl = document.getElementById("transcript");
 const transcriptEditEl = document.getElementById("transcriptEdit");
 const editTranscriptBtn = document.getElementById("editTranscriptBtn");
+const generateFromTextBtn = document.getElementById("generateFromTextBtn");
 const cyEl = document.getElementById("cy");
 const chartWrap = document.getElementById("chartWrap");
 const placeholderEl = document.getElementById("placeholder");
@@ -480,7 +489,9 @@ async function startListening() {
   waveArea.classList.remove("clickable");
   genBtn.disabled = false;
   startTimerAndRing();
-  connect();
+  // Reuse a connection that's already open (e.g. from ⚡ on a pasted transcript).
+  if (ws && ws.readyState === WebSocket.OPEN && !ws.finishing) ws.send(JSON.stringify({ type: "stt_start" }));
+  else if (!ws || ws.finishing || ws.readyState > WebSocket.OPEN) connect();
   try {
     await startMic();
     startWaveLoop();
@@ -513,6 +524,7 @@ function stopListening() {
 // (handled in connect()). The timeout is only a fallback if that never arrives.
 const STOP_FLUSH_TIMEOUT_MS = 30000;
 function finishSocket(sock) {
+  sock.finishing = true; // this socket's session is ending; never reuse it
   if (sock.readyState !== WebSocket.OPEN) { sock.close(); return; }
   sock.send(JSON.stringify({ type: "stt_stop" }));
   setTimeout(() => sock.close(), STOP_FLUSH_TIMEOUT_MS);
@@ -531,6 +543,19 @@ genBtn.onclick = () => {
   setTimeout(() => { if (listening) genBtn.disabled = false; }, FORCE_COOLDOWN_MS);
 };
 
+// Messages for a connection that isn't open yet -- e.g. ⚡ on a pasted
+// transcript with the mic off: the socket is opened on demand, and they go out
+// in order once it is.
+let outbox = [];
+function sendWhenOpen(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN && !ws.finishing) {
+    ws.send(JSON.stringify(msg));
+    return;
+  }
+  outbox.push(msg);
+  if (!ws || ws.finishing || ws.readyState > WebSocket.OPEN) connect(); // none, ending, or closed
+}
+
 // ---- websocket ----
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws/lecture`);
@@ -541,6 +566,7 @@ function connect() {
     // Carry on the map already on screen (after a reconnect, or Start after Stop).
     if (mapTopics.length) ws.send(JSON.stringify({ type: "resume", topics: mapTopics }));
     if (listening) ws.send(JSON.stringify({ type: "stt_start" }));
+    for (const msg of outbox.splice(0)) ws.send(JSON.stringify(msg));
   };
 
   ws.onmessage = (event) => {
@@ -555,9 +581,11 @@ function connect() {
     } else if (msg.type === "empty") {
       genBtn.classList.remove("busy");
       resetRing();
+      if (!mapTopics.length) placeholderEl.textContent = PLACEHOLDER_TEXT;
     } else if (msg.type === "error") {
       genBtn.classList.remove("busy");
       resetRing();
+      if (!mapTopics.length) placeholderEl.textContent = PLACEHOLDER_TEXT;
       showError((msg.stage ? msg.stage + ": " : "") + (msg.detail || "diagram generation error"));
     } else if (msg.type === "stt_status") {
       updateSttStatus(msg.state, msg.detail);
@@ -591,37 +619,48 @@ function renderTranscript() {
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
-// ---- transcript correction: pencil toggles an editable view of the
-// committed transcript. Saving sends the corrected text to the backend,
-// which replaces its rolling STT buffer with it — so a fixed word/phrase
-// actually feeds the *next* diagram extraction instead of just looking
-// right on screen. ----
-editTranscriptBtn.onclick = () => {
-  if (!editingTranscript) {
-    editingTranscript = true;
-    transcriptEditEl.value = finalLines.join(" ");
-    transcriptEl.style.display = "none";
-    transcriptEditEl.style.display = "block";
-    editTranscriptBtn.textContent = "✓";
-    editTranscriptBtn.title = "Save corrections";
-    editTranscriptBtn.classList.add("active");
-    transcriptEditEl.focus();
-  } else {
-    const corrected = transcriptEditEl.value.trim();
-    finalLines = corrected ? [corrected] : [];
-    partialLine = "";
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "transcript_edit", text: corrected }));
-    }
-    editingTranscript = false;
-    transcriptEl.style.display = "block";
-    transcriptEditEl.style.display = "none";
-    editTranscriptBtn.textContent = "✎";
-    editTranscriptBtn.title = "Edit transcript";
-    editTranscriptBtn.classList.remove("active");
-    renderTranscript();
+// ---- transcript editing: the pencil opens an editable copy of the committed
+// transcript, to fix mis-heard words or paste in a ready transcript. ✓ saves
+// (the backend diagrams anything new at its next update while listening);
+// ⚡ saves and builds the map right away, with or without the mic. Boxes
+// already on the map stay as they are. ----
+const PLACEHOLDER_TEXT = placeholderEl.textContent;
+
+function openTranscriptEditor() {
+  editingTranscript = true;
+  transcriptEditEl.value = finalLines.join(" ");
+  transcriptEl.style.display = "none";
+  transcriptEditEl.style.display = "block";
+  generateFromTextBtn.style.display = "flex";
+  editTranscriptBtn.textContent = "✓";
+  editTranscriptBtn.title = "Save the transcript";
+  editTranscriptBtn.classList.add("active");
+  transcriptEditEl.focus();
+}
+
+function closeTranscriptEditor(generate) {
+  const corrected = transcriptEditEl.value.trim();
+  finalLines = corrected ? [corrected] : [];
+  partialLine = "";
+  if (generate) {
+    sendWhenOpen({ type: "transcript_edit", text: corrected });
+    sendWhenOpen({ type: "force" });
+    if (!mapTopics.length) placeholderEl.textContent = "Building the map…";
+  } else if (ws && ws.readyState === WebSocket.OPEN && !ws.finishing) {
+    ws.send(JSON.stringify({ type: "transcript_edit", text: corrected }));
   }
-};
+  editingTranscript = false;
+  transcriptEl.style.display = "block";
+  transcriptEditEl.style.display = "none";
+  generateFromTextBtn.style.display = "none";
+  editTranscriptBtn.textContent = "✎";
+  editTranscriptBtn.title = "Edit or paste the transcript";
+  editTranscriptBtn.classList.remove("active");
+  renderTranscript();
+}
+
+editTranscriptBtn.onclick = () => (editingTranscript ? closeTranscriptEditor(false) : openTranscriptEditor());
+generateFromTextBtn.onclick = () => closeTranscriptEditor(true);
 
 // ---- mic capture: getUserMedia -> downsample to 16kHz mono -> Int16 PCM -> binary WS frames ----
 // ScriptProcessorNode is deprecated but universally supported and keeps this a

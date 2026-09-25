@@ -73,7 +73,8 @@ def apply_update(topics: list[dict], update: MapUpdate, current_full: bool = Fal
     """
     added: list[str] = []
     current: Optional[dict] = topics[-1] if topics else None
-    title = _clean_label(update.new_topic_title)
+    # The prompt lists topics as "1. Title"; Gemini sometimes copies the number.
+    title = _clean_label(re.sub(r"^\s*\d+\s*[.):-]\s*", "", update.new_topic_title))
     leftover = None
     if current is not None and not current_full:
         added += _merge(current, update.add)

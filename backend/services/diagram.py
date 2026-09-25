@@ -38,7 +38,14 @@ def _get_client() -> genai.Client:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is not set (check .env)")
-        _client = genai.Client(api_key=api_key)
+        # The SDK's defaults (5 attempts, backoff up to 60s, no timeout) can
+        # leave one call hanging for minutes on a 429/503 while the map just
+        # stops. Fail within seconds instead, so the caller can report it and
+        # back off on its own schedule.
+        _client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            timeout=25_000,  # ms
+            retry_options=types.HttpRetryOptions(attempts=3, max_delay=4.0),
+        ))
     return _client
 
 SYSTEM = """You turn a live lecture into simple diagrams for students who are still
@@ -63,7 +70,8 @@ Language rules (most important):
          Water -> cools -> Elephant.
    Bad:  Thick skin -> creates -> Acts like a sponge (not a sentence).
          No sweat glands -> requires -> Cooling (the speaker did not say this).
-4. Never invent causes or facts. Arrow direction matters.
+4. Never invent causes or facts. An arrow goes from the thing that acts to the
+   thing it acts on: Ears -> cool -> Blood, not Blood -> cools -> Ears.
 5. emoji: one emoji only when it clearly pictures a concrete thing (an animal,
    object, food, weather, body part). Leave it "" for most boxes and for every
    abstract idea.
@@ -72,8 +80,9 @@ Topic rules:
 6. Boxes about the current subject go in "add". Arrows in "add" may connect to
    boxes already in the CURRENT TOPIC, using their ids.
 7. When the speaker moves to a different subject, or the CURRENT TOPIC is
-   marked FULL, start a new topic: "new_topic_title" (1 to 4 simple words) and
-   its boxes and arrows in "new_topic". Arrows in "new_topic" only connect
+   marked FULL, start a new topic: "new_topic_title" (1 to 4 simple words,
+   different from every earlier topic title) and its boxes and arrows in
+   "new_topic". Arrows in "new_topic" only connect
    boxes inside "new_topic".
 8. If the NEW SPEECH is only greetings, logistics or small talk, or adds
    nothing new, return everything empty.

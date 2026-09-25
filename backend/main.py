@@ -2,9 +2,11 @@
 -> live flowchart JSON out, over one WebSocket per browser tab.
 """
 import asyncio
+import difflib
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -49,9 +51,44 @@ MIN_EXTRACTION_GAP_SECONDS = int(os.getenv("MIN_EXTRACTION_GAP_SECONDS", "8"))
 MAX_BACKOFF_SKIPS = 6  # after a Gemini error, wait up to this many extra cycles
 # before trying again, instead of hammering an API that's already saying no.
 STOP_FLUSH_TIMEOUT_SECONDS = 3  # on Stop, how long to wait for Scribe to commit its last partial
+GEMINI_TIMEOUT_SECONDS = 30  # a hung call must not stall the map for the rest of the lecture
+MAX_UPDATE_CHARS = 600  # one map update covers at most about this much speech; a longer
+# backlog (a pasted transcript) is split over several updates, a few seconds apart.
 
 # Errors from Scribe that mean "stop trying, this session is dead" vs. transient.
 _SCRIBE_FATAL_ERRORS = {"auth_error", "unaccepted_terms", "quota_exceeded"}
+
+
+def split_edit(covered_text: str, edited: str) -> tuple[str, str]:
+    """Split an edited transcript into (what the map already covers, what's new).
+
+    The new part is everything after the last run of words that matches the
+    covered text -- a pasted transcript, or speech the map hasn't reached yet --
+    so small corrections inside the covered part don't get diagrammed twice.
+    The new part keeps its line breaks (see speech_segments).
+    """
+    spans = [m.span() for m in re.finditer(r"\S+", edited)]
+    words = [edited[a:b] for a, b in spans]
+    blocks = difflib.SequenceMatcher(a=covered_text.split(), b=words, autojunk=False).get_matching_blocks()
+    end = max((m.b + m.size for m in blocks if m.size), default=0)
+    if end >= len(spans):
+        return edited.strip(), ""
+    cut = spans[end][0]
+    return edited[:cut].strip(), edited[cut:].strip()
+
+
+def speech_segments(text: str) -> list[str]:
+    """Pasted text as segments for the map updates: a paragraph each (usually
+    one subtopic, so updates line up with topics), or its sentences when a
+    paragraph is longer than MAX_UPDATE_CHARS."""
+    out = []
+    for para in re.split(r"\n\s*\n", text.strip()):
+        para = " ".join(para.split())
+        if len(para) <= MAX_UPDATE_CHARS:
+            out += [para] if para else []
+        else:
+            out += [s for s in re.split(r"(?<=[.!?])\s+", para) if s]
+    return out
 
 @app.get("/")
 async def root():
@@ -111,17 +148,28 @@ async def lecture_ws(ws: WebSocket):
         except Exception:
             log.exception("failed to persist diagram")
 
-    def pending_speech() -> str:
-        """Speech the map doesn't cover yet: committed segments past `covered`,
-        plus Scribe's in-progress partial (VAD only commits on a pause, and a long
-        unbroken explanation can run 30s+ without one), minus the start of that
-        segment an earlier extraction already saw while it was still a partial."""
+    def pending_speech() -> tuple[str, int, bool]:
+        """Speech the map doesn't cover yet, as (text, committed segments used,
+        whether Scribe's in-progress partial is included): committed segments
+        past `covered`, then the partial (VAD only commits on a pause, and a long
+        unbroken explanation can run 30s+ without one), minus the start of the
+        first one an earlier extraction already saw while it was a partial.
+        Whole segments up to about MAX_UPDATE_CHARS, at least one; the rest is
+        left for the next update."""
+        committed_left = len(stt_chunks) - covered
         segments = stt_chunks[covered:] + ([partial_text] if partial_text else [])
         if segments and seen_partial and segments[0].startswith(seen_partial):
             segments[0] = segments[0][len(seen_partial):]
+        parts, size = [], 0
+        for s in segments:
+            if parts and size + len(s) > MAX_UPDATE_CHARS:
+                break
+            parts.append(s)
+            size += len(s)
+        used, with_partial = min(len(parts), committed_left), len(parts) > committed_left
         if manual_text and manual_text != used_manual:
-            segments.append(manual_text)
-        return " ".join(s.strip() for s in segments if s.strip())
+            parts.append(manual_text)
+        return " ".join(p.strip() for p in parts if p.strip()), used, with_partial
 
     async def add_committed_text(text: str):
         """A finished Scribe segment: into the extraction buffer, to the browser, and to the DB."""
@@ -222,14 +270,16 @@ async def lecture_ws(ws: WebSocket):
             manual_text = msg.get("text", "")
             log.info("[TRACE] text entered buffer via manual box (len=%d chars)", len(manual_text))
         elif mtype == "transcript_edit":
-            # A teacher/student fixed a mis-heard word in the live transcript.
-            # Boxes already on the map stay as they are; the corrected text
-            # becomes the "already covered" context the next extraction reads.
+            # The transcript was corrected, or a ready transcript was pasted in.
+            # What the map already covers stays covered (its boxes don't change);
+            # anything new is queued as speech, a paragraph per segment, so a long
+            # paste is diagrammed over several updates.
             corrected = (msg.get("text") or "").strip()
-            stt_chunks[:] = [corrected] if corrected else []
-            covered = len(stt_chunks)
+            done, new = split_edit(" ".join(stt_chunks[:covered]), corrected)
+            stt_chunks[:] = ([done] if done else []) + speech_segments(new)
+            covered = 1 if done else 0
             seen_partial = ""
-            log.info("transcript corrected by user (len=%d chars)", len(corrected))
+            log.info("transcript edited (len=%d chars, %d new)", len(corrected), len(new))
             await persist_chunk(corrected, "correction")
         elif mtype == "resume":
             # Reconnect, or Start again after Stop: carry on the map the browser
@@ -263,14 +313,14 @@ async def lecture_ws(ws: WebSocket):
             elif message.get("text") is not None:
                 await handle_text_message(message["text"])
 
-    async def extract_and_send(text: str) -> bool:
-        """One Gemini call that grows the map with `text` (from pending_speech(),
-        called right before with no await in between); sends the updated map (or
-        "empty"/"error") to the browser and persists it. Returns False on a
-        Gemini error so the caller can back off."""
+    async def extract_and_send(text: str, used: int, with_partial: bool) -> bool:
+        """One Gemini call that grows the map with `text` (the result of
+        pending_speech(), called right before with no await in between); sends
+        the updated map (or "empty"/"error") to the browser and persists it.
+        Returns False on a Gemini error so the caller can back off."""
         nonlocal last_persisted_manual, covered, seen_partial, used_manual, topic_started
         # What `text` was built from; marked as covered only once Gemini succeeds.
-        n_committed, partial_snapshot, manual_snapshot = len(stt_chunks), partial_text, manual_text
+        start_covered, partial_snapshot, manual_snapshot = covered, partial_text, manual_text
         start = time.monotonic()
         current_full = bool(topics) and is_full(topics[-1], start - topic_started)
         if manual_text and manual_text != last_persisted_manual:
@@ -280,7 +330,14 @@ async def lecture_ws(ws: WebSocket):
             last_persisted_manual = manual_text
         log.info("[TRACE] extraction started (len=%d chars): %r", len(text), text[:80])
         try:
-            update = await extract_update(topics, " ".join(stt_chunks[:covered]), text, current_full)
+            update = await asyncio.wait_for(
+                extract_update(topics, " ".join(stt_chunks[:covered]), text, current_full),
+                timeout=GEMINI_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            log.error("gemini didn't answer within %ss", GEMINI_TIMEOUT_SECONDS)
+            await safe_send({"type": "error", "stage": "gemini", "detail": f"Gemini didn't answer within {GEMINI_TIMEOUT_SECONDS}s"})
+            return False
         except ModelNotFoundError as e:
             log.error("gemini model error: %s", e)
             await safe_send({"type": "error", "stage": "gemini", "detail": str(e)})
@@ -299,7 +356,10 @@ async def lecture_ws(ws: WebSocket):
             return False
 
         log.info("gemini extraction done (%.2fs)", time.monotonic() - start)
-        covered, seen_partial, used_manual = n_committed, partial_snapshot, manual_snapshot
+        if covered == start_covered:  # else a transcript edit re-based the transcript meanwhile
+            covered += used
+            seen_partial = partial_snapshot if with_partial else ""
+        used_manual = manual_snapshot
         n_topics = len(topics)
         added = apply_update(topics, update, current_full)
         if len(topics) > n_topics:
@@ -324,14 +384,17 @@ async def lecture_ws(ws: WebSocket):
                 pass
             force_event.clear()
 
-            text = pending_speech()
+            text, used, with_partial = pending_speech()
             log.info("[TRACE] timer tick (forced=%s): new speech=%d chars", forced, len(text))
             if stopping:
-                # Final pass after Stop. Once per session, so it skips the gap
-                # floor and backoff; only skipped if nothing is new since the
-                # last extraction.
-                if text and text != last_extracted:
-                    await extract_and_send(text)
+                # Final pass after Stop: everything still pending, in as many
+                # updates as that takes. Once per session, so it skips the gap
+                # floor and backoff.
+                while text and text != last_extracted:
+                    last_extracted = text
+                    if not await extract_and_send(text, used, with_partial):
+                        break
+                    text, used, with_partial = pending_speech()
                 await safe_send({"type": "stopped"})
                 return
             if not text:
@@ -353,15 +416,25 @@ async def lecture_ws(ws: WebSocket):
                 # stays "busy" until an answer arrives, so it must always get one.
                 log.info("forced extraction delayed %.1fs by MIN_EXTRACTION_GAP_SECONDS", wait)
                 await asyncio.sleep(wait)
-                text = pending_speech()
+                text, used, with_partial = pending_speech()
                 if not text:
                     continue
 
             now = time.monotonic()
             last_extracted = text
             last_attempt = now
-            ok = await extract_and_send(text)
+            # More pending than one update takes (a pasted transcript): carry on
+            # right after, spaced by MIN_EXTRACTION_GAP_SECONDS, instead of
+            # waiting a full interval per chunk.
+            backlog = len(stt_chunks) - covered > used or (bool(partial_text) and not with_partial)
+            ok = await extract_and_send(text, used, with_partial)
             backoff_skips_remaining = 0 if ok else MAX_BACKOFF_SKIPS
+            if not ok:
+                # Retry the same speech once the backoff is over; a pasted
+                # transcript never changes, so "nothing new" would skip it forever.
+                last_extracted = ""
+            elif backlog:
+                force_event.set()
 
     tasks = [asyncio.create_task(receive_loop()), asyncio.create_task(extraction_loop())]
     try:

@@ -29,8 +29,12 @@ re-arranges everything, **📄 Source** shows the speech behind the newest
 boxes. The **Quiz** panel asks fill-the-gap questions built from the map's own
 arrows and highlights the answer on the map.
 
-**No mic?** `POST /api/process` (see [REST API](#rest-api-phase-4)) runs the
-same Gemini extraction on pasted text.
+**No mic, or a ready transcript?** Click **✎** in the transcript card, paste
+or type the text, then press **⚡** next to ✓: the map is built from it right
+away, without the mic — a long text over several updates, a paragraph at a
+time, so each paragraph tends to become its own topic. **✓** only saves (while
+listening, anything new in it is picked up at the next update). Fixing a word
+in text the map already covers doesn't add boxes twice.
 
 ## What's verified (as of 2026-09-25)
 
@@ -42,7 +46,8 @@ same Gemini extraction on pasted text.
 | Closing a tab stops its extraction loop | ✅ With a fake Scribe, and shown to fail on the code before the fix |
 | Gemini output shape enforced via `response_json_schema`; Pydantic still checks edges point at real nodes | ✅ Even a prompt telling the model to drop `to` gets `to` back with the schema |
 | Growing map rules: boxes only added, duplicates reused, bad arrows dropped, full topic continues in a new group, resume validation | ✅ 22 unit checks on `backend/services/topics.py` |
-| Live loop sends only speech the map doesn't cover yet; map grows across updates; resume after reconnect | ✅ WebSocket integration test with a fake Scribe and fake Gemini |
+| Live loop sends only speech the map doesn't cover yet; map grows across updates; resume after reconnect; pasted transcript split into updates (each sentence once, in order), corrections not re-sent; a hung Gemini call cut off after 30s and retried | ✅ WebSocket integration test with a fake Scribe and fake Gemini (26 checks) |
+| Paste + ⚡ with the mic off, real Gemini | ✅ Headless Chrome on the running app: the 6-paragraph elephant speech became 6 matching topics, 22 boxes, in about a minute |
 | Simple-English prompt on a real lecture (elephant talk, 6 pieces) | ✅ Live Gemini: arrows read as simple sentences ("Mud bath protects Wrinkled skin"), topics split by subject; the occasional odd arrow remains |
 | Lecture map canvas: topic groups side by side, finished topics never move, scroll = move / pinch = zoom around the pointer, zoom buttons, follow mode, Tidy, Source, glow, quiz (answers, highlight, no ambiguous options), resume on reconnect | ✅ 45 checks in headless Chrome driving the real page with real mouse events |
 | REST API + SQLite persistence | ✅ Live |
@@ -111,7 +116,9 @@ live WS message; the REST API is the same data for anything already persisted.
   the raw error text from ElevenLabs, which will usually say exactly what's
   wrong (auth, bad query param, unsupported audio format, etc).
 - **20s extraction interval, 8s hard floor**: conservative guesses, not
-  measured limits. Adjust in `.env` if it feels sluggish or
+  measured limits. A Gemini call that doesn't answer within 30s is reported
+  as an error and retried after the backoff (the SDK's own retries are cut
+  to 3 quick attempts; its defaults could hang for minutes). Adjust in `.env` if it feels sluggish or
   you're burning quota too fast.
 - Gemini model used: `gemini-3.5-flash-lite` (configurable — see Config).
   Its free tier allows 15 requests/minute; the app uses about 3/minute. The
