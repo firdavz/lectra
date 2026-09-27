@@ -141,15 +141,18 @@ live WS message; the REST API is the same data for anything already persisted.
 
 ## Architecture
 ```
-frontend/index.html    Browser: mic capture (getUserMedia -> downsample to
-                        16kHz PCM16 -> binary WS frames) -> WebSocket ->
+frontend/index.html    The page's markup: controls, transcript, map, quiz
+frontend/styles.css     All styling; every colour is a design token in :root
+                        (the canvas reads them too)
+frontend/app.js         Browser logic: mic capture (getUserMedia -> downsample
+                        to 16kHz PCM16 -> binary WS frames) -> WebSocket ->
                         draws the lecture map on a Cytoscape.js canvas (topic
                         groups, each in its kind's layout: dagre top-down or
                         left-right, radial tree for concepts; only new boxes
                         added; scroll to move, pinch to zoom, Fit/Tidy/Source),
-                        quiz panel,
-                        live transcript, recording timer, next-update
-                        countdown; sends the map back on reconnect
+                        quiz panel, live transcript, paste + ⚡, recording
+                        timer, next-update countdown; sends the map back on
+                        reconnect
 backend/main.py         FastAPI + WebSocket: relays audio to Scribe, keeps a
                         tracks which speech the map already covers, grows
                         the map on a timer (or on-demand via force), persists
