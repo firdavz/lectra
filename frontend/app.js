@@ -209,7 +209,10 @@ function sendWhenOpen(msg) {
 
 // ---- websocket ----
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws/lecture`);
+  // wss:// on an https page (e.g. when deployed): browsers block plain ws://
+  // from a secure page, which left the mic streaming into nothing.
+  const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${wsProtocol}://${location.host}/ws/lecture`);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
