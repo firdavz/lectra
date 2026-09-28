@@ -1,4 +1,4 @@
-# Lecture -> Diagram: one-command startup.
+# Lectra: one-command startup.
 # Run this from PowerShell: .\start.ps1
 # Then open http://localhost:8010/static/index.html in Chrome.
 

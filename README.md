@@ -1,4 +1,4 @@
-# Lecture → Diagram
+# 🎓 Lectra
 
 Speak through a lecture → server-relayed live transcription (ElevenLabs Scribe)
 → Gemini grows a **lecture map** in simple English for students still learning
