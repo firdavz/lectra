@@ -1,11 +1,16 @@
 # 🎓 Lectra
 
+> **Problem:** Fast lectures in a second language are hard to follow and slow to understand.\
+> **Solution:** Lectra turns them into simple, live diagrams you understand at a glance.
+
 Speak through a lecture → server-relayed live transcription (ElevenLabs Scribe)
 → Gemini grows a **lecture map** in simple English for students still learning
 the language: one small diagram per subtopic, side by side, nothing ever
 dropped, each drawn in the shape that fits its content → shown live on an interactive canvas (Cytoscape.js) with a quiz made
 from the map → every map update is persisted with the speech it came from,
 browsable via a small REST API.
+
+▶️ **[Watch the demo](https://www.loom.com/share/1989f4ce5ee14f45b426835adbdb85a3)**
 
 ## Quick start
 ```powershell
