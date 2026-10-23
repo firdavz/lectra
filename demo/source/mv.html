@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lectra MV</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05060f; overflow: hidden; }
+  canvas { position: absolute; inset: 0; margin: auto; width: min(100vw, 177.78vh); height: min(56.25vw, 100vh); }
+  #play {
+    position: absolute; inset: 0; margin: auto; width: 180px; height: 64px; border-radius: 32px; border: 0;
+    font: 700 22px "Segoe UI", system-ui, sans-serif; color: #fff; cursor: pointer;
+    background: linear-gradient(135deg, #7c5cff, #00d4ff); box-shadow: 0 0 40px rgba(124, 92, 255, .6);
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<button id="play" type="button" hidden>▶ Play</button>
+<audio id="music" src="music.wav" preload="auto"></audio>
+<script src="mv.js"></script>
+</body>
+</html>
