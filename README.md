@@ -10,7 +10,7 @@ dropped, each drawn in the shape that fits its content → shown live on an inte
 from the map → every map update is persisted with the speech it came from,
 browsable via a small REST API.
 
-▶️ **[Watch the demo](https://www.loom.com/share/1989f4ce5ee14f45b426835adbdb85a3)**
+▶️ **[Watch the demo](demo/lectra-mv.mp4)**
 
 ## Quick start
 ```powershell
